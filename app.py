@@ -11,8 +11,8 @@ st.set_page_config(page_title="SPUB Generator", page_icon="💊", layout="wide")
 st.title("📄 SPUB to Excel Generator")
 st.write("Upload the patient's SPUB PDF below. The app will automatically map the data into your default templates.")
 
-KEW_TEMPLATE = "KEW PS7 empty_2.xlsx"
-LAMP_TEMPLATE = "Lampiran 2 empty_2.xlsx"
+KEW_TEMPLATE = "KEW PS7 empty.xlsx"
+LAMP_TEMPLATE = "Lampiran 2 empty.xlsx"
 
 thin_border = Border(
     left=Side(style='thin', color='000000'), right=Side(style='thin', color='000000'),
