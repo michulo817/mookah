@@ -143,48 +143,64 @@ def process_lampiran(patient_data, template_path, output_name):
         cell_m.font, cell_m.alignment = font_style, align_center
     wb.save(output_name)
 
-# --- UI APP LAYOUT ---
-st.sidebar.header("1. Upload Templates")
-st.sidebar.info("Upload your empty Excel templates here. You only need to do this once per session.")
+# --- UPGRADED UI APP LAYOUT ---
+st.sidebar.header("⚙️ Master Templates")
+st.sidebar.info("Upload your empty Excel templates here. These serve as the master layout for this session.")
 uploaded_kew = st.sidebar.file_uploader("KEW PS7 Template", type="xlsx")
 uploaded_lamp = st.sidebar.file_uploader("Lampiran 2 Template", type="xlsx")
 
-st.header("2. Upload Patient Data")
-uploaded_pdf = st.file_uploader("Drop the patient's SPUB PDF here", type="pdf")
+st.markdown("### 1. Upload Patient SPUB")
+uploaded_pdf = st.file_uploader("Drop the patient's SPUB PDF here", type="pdf", label_visibility="collapsed")
 
-if st.button("Generate Excel Files", type="primary"):
-    if not (uploaded_kew and uploaded_lamp and uploaded_pdf):
-        st.warning("⚠️ Please upload all three files (2 templates in the sidebar, 1 PDF here).")
-    else:
-        with st.spinner("Processing documents..."):
-            # Save uploaded files temporarily
+if uploaded_pdf and uploaded_kew and uploaded_lamp:
+    st.markdown("### 2. Preview & Generate")
+    
+    # Wide button
+    if st.button("Extract & Format Files", type="primary", use_container_width=True):
+        
+        # Animated status box instead of a basic spinner
+        with st.status("Processing documents...", expanded=True) as status:
+            st.write("Reading PDF data...")
             with open("temp_pdf.pdf", "wb") as f: f.write(uploaded_pdf.getbuffer())
             with open("temp_kew.xlsx", "wb") as f: f.write(uploaded_kew.getbuffer())
             with open("temp_lamp.xlsx", "wb") as f: f.write(uploaded_lamp.getbuffer())
 
-            # Run extraction and formatting
             patient_data = extract_data("temp_pdf.pdf")
             
-            # Clean up the patient name for the file download name
+            st.write("Formatting KEW PS7 & Lampiran 2...")
             safe_name = re.sub(r'[^a-zA-Z0-9]', '_', patient_data['Nama'])
             out_kew = f"KEW_PS7_{safe_name}.xlsx"
             out_lamp = f"Lampiran2_{safe_name}.xlsx"
 
             process_kew(patient_data, "temp_kew.xlsx", out_kew)
             process_lampiran(patient_data, "temp_lamp.xlsx", out_lamp)
-
-            st.success(f"✅ Successfully processed {len(patient_data['Drugs'])} medications for {patient_data['Nama']}!")
-
-            # Provide Download Buttons
-            col1, col2 = st.columns(2)
-            with col1:
-                with open(out_kew, "rb") as f:
-                    st.download_button("⬇️ Download KEW PS7", f, file_name=out_kew, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-            with col2:
-                with open(out_lamp, "rb") as f:
-                    st.download_button("⬇️ Download Lampiran 2", f, file_name=out_lamp, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             
-            # Clean up temp files behind the scenes
-            os.remove("temp_pdf.pdf")
-            os.remove("temp_kew.xlsx")
-            os.remove("temp_lamp.xlsx")
+            status.update(label="Extraction Complete!", state="complete", expanded=False)
+
+        # Dashboard Metrics
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Patient Name", patient_data["Nama"])
+        col2.metric("IC Number", patient_data["No KP"])
+        col3.metric("Drugs Extracted", len(patient_data["Drugs"]))
+
+        # Live Data Preview Table
+        with st.expander("👀 Preview Extracted Medications", expanded=True):
+            st.dataframe(patient_data["Drugs"], use_container_width=True)
+
+        # Full-width Download Buttons
+        st.success("Your perfectly formatted Excel files are ready.")
+        dl_col1, dl_col2 = st.columns(2)
+        with dl_col1:
+            with open(out_kew, "rb") as f:
+                st.download_button("⬇️ Download KEW PS7", f, file_name=out_kew, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+        with dl_col2:
+            with open(out_lamp, "rb") as f:
+                st.download_button("⬇️ Download Lampiran 2", f, file_name=out_lamp, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+            
+        # Clean up temp files behind the scenes
+        os.remove("temp_pdf.pdf")
+        os.remove("temp_kew.xlsx")
+        os.remove("temp_lamp.xlsx")
+
+elif not (uploaded_kew and uploaded_lamp):
+    st.warning("👈 Please upload your empty Excel templates in the sidebar to begin.")
