@@ -1,3 +1,4 @@
+cat << 'EOF' > app.py
 import streamlit as st
 import re
 import openpyxl
@@ -7,7 +8,7 @@ from pypdf import PdfReader
 import shutil
 import os
 
-st.set_page_config(page_title="SPUB Generator", page_icon="💊", layout="centered")
+st.set_page_config(page_title="SPUB Generator", page_icon="💊", layout="wide")
 st.title("📄 SPUB to Excel Generator")
 st.write("Upload the patient's SPUB PDF below. The app will automatically map the data into your default templates.")
 
@@ -104,4 +105,79 @@ def process_lampiran(patient_data, template_path, output_name):
             sheet.unmerge_cells(str(merged_range))
             
     for r in range(10, 29):
-        for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'L', 'M']: sheet
+        for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'L', 'M']: sheet[f'{col}{r}'] = None
+        for c_idx in range(1, 14): sheet.cell(row=r, column=c_idx).border = thin_border
+
+    start_row = 10
+    num_drugs = min(len(patient_data["Drugs"]), 19) 
+    end_row = start_row + num_drugs - 1
+
+    sheet[f'A{start_row}'] = 1
+    sheet[f'B{start_row}'] = patient_data["Tarikh"]
+    sheet[f'C{start_row}'] = "HOSPITAL BINTULU"
+    sheet[f'D{start_row}'] = patient_data["Nama"]
+    
+    ic_cell = sheet[f'E{start_row}']
+    ic_cell.value = str(patient_data["No KP"])
+    ic_cell.number_format = '@' 
+    
+    if num_drugs > 1:
+        for col in ['A', 'B', 'C', 'D', 'E']:
+            sheet.merge_cells(start_row=start_row, start_column=column_index_from_string(col),
+                              end_row=end_row, end_column=column_index_from_string(col))
+            cell = sheet[f'{col}{start_row}']
+            cell.font, cell.alignment = font_style, align_center
+
+    for i, drug in enumerate(patient_data["Drugs"]):
+        if i >= 19: break
+        r = start_row + i
+        cell_g = sheet[f'G{r}']
+        cell_g.value = drug["Name"]
+        cell_g.font, cell_g.alignment = font_style, align_left
+        
+        cell_l = sheet[f'L{r}']
+        cell_l.value = drug["Dosage"]
+        cell_l.font, cell_l.alignment = font_style, align_center
+        
+        cell_m = sheet[f'M{r}']
+        cell_m.value = int(drug["Quantity"]) if drug["Quantity"].isdigit() else drug["Quantity"]
+        cell_m.font, cell_m.alignment = font_style, align_center
+    wb.save(output_name)
+
+st.write("---")
+
+uploaded_pdf = st.file_uploader("Upload Patient SPUB PDF", type=["pdf"])
+
+if uploaded_pdf is not None:
+    st.success("PDF uploaded!")
+    
+    if not os.path.exists(KEW_TEMPLATE) or not os.path.exists(LAMP_TEMPLATE):
+        st.error(f"Cannot find: {KEW_TEMPLATE} or {LAMP_TEMPLATE}. Make sure they are in the SPUB_Project folder.")
+    else:
+        if st.button("Generate Excel Files", type="primary"):
+            with st.spinner("Processing..."):
+                with open("temp_pdf.pdf", "wb") as f:
+                    f.write(uploaded_pdf.getbuffer())
+
+                patient_data = extract_data("temp_pdf.pdf")
+                safe_name = re.sub(r'[^a-zA-Z0-9]', '_', patient_data['Nama'])
+                out_kew = f"KEW_PS7_{safe_name}.xlsx"
+                out_lamp = f"Lampiran2_{safe_name}.xlsx"
+
+                process_kew(patient_data, KEW_TEMPLATE, out_kew)
+                process_lampiran(patient_data, LAMP_TEMPLATE, out_lamp)
+
+            st.write(f"**Patient:** {patient_data['Nama']} | **IC:** {patient_data['No KP']}")
+            st.dataframe(patient_data["Drugs"])
+
+            col1, col2 = st.columns(2)
+            with col1:
+                with open(out_kew, "rb") as f:
+                    st.download_button("Download KEW PS7", f, file_name=out_kew)
+            with col2:
+                with open(out_lamp, "rb") as f:
+                    st.download_button("Download Lampiran 2", f, file_name=out_lamp)
+
+            if os.path.exists("temp_pdf.pdf"):
+                os.remove("temp_pdf.pdf")
+EOF
