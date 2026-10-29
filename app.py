@@ -9,15 +9,125 @@ import os
 import io
 import zipfile
 
-st.set_page_config(page_title="SPUB Multi-Batch Generator", page_icon="💊", layout="wide")
-st.title("📄 SPUB Multi-Batch Generator")
-st.write("Upload one or multiple patient SPUB PDFs. If patient medications exceed table capacity, sequential pages are created while preserving the layout.")
+# --- 1. CORE SETUP & BRUTALIST CSS INJECTION ---
+st.set_page_config(page_title="SPUB", layout="centered")
+
+st.markdown("""
+<style>
+    /* Hide Default Streamlit Clutter */
+    #MainMenu {visibility: hidden;}
+    header {visibility: hidden;}
+    footer {visibility: hidden;}
+    
+    /* Base Aesthetic - Absolute Black & White */
+    .stApp {
+        background-color: #000000;
+        color: #ffffff;
+        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    }
+    
+    /* Typography Overrides */
+    h1, h2, h3, p, span, div {
+        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif !important;
+        letter-spacing: 1px;
+    }
+    
+    /* The Main Title */
+    .ye-title {
+        font-size: 4rem;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: 0.2rem;
+        border-bottom: 2px solid #333333;
+        padding-bottom: 10px;
+        margin-bottom: 40px;
+        margin-top: -50px;
+    }
+    
+    .ye-subtitle {
+        color: #888888;
+        font-size: 0.9rem;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        margin-bottom: 40px;
+    }
+
+    /* Buttons - Sharp, Blocky, Inverted */
+    .stButton > button {
+        background-color: #ffffff !important;
+        color: #000000 !important;
+        border-radius: 0px !important;
+        border: none !important;
+        font-weight: 800 !important;
+        text-transform: uppercase !important;
+        letter-spacing: 2px !important;
+        padding: 20px !important;
+        transition: opacity 0.2s;
+    }
+    .stButton > button:hover {
+        opacity: 0.7;
+    }
+    
+    .stDownloadButton > button {
+        background-color: #000000 !important;
+        color: #ffffff !important;
+        border: 2px solid #ffffff !important;
+        border-radius: 0px !important;
+        font-weight: 800 !important;
+        text-transform: uppercase !important;
+        letter-spacing: 1px !important;
+    }
+    .stDownloadButton > button:hover {
+        background-color: #ffffff !important;
+        color: #000000 !important;
+    }
+
+    /* File Uploader */
+    [data-testid="stFileUploader"] {
+        background-color: #050505;
+        border: 1px solid #333333;
+        border-radius: 0px;
+        padding: 30px;
+    }
+    [data-testid="stFileUploadDropzone"] {
+        border: none !important;
+        background: transparent !important;
+    }
+
+    /* Alerts and Info Boxes */
+    .stAlert {
+        background-color: #0a0a0a !important;
+        color: #ffffff !important;
+        border: 1px solid #444444 !important;
+        border-radius: 0px !important;
+        text-transform: uppercase;
+        font-size: 0.8rem;
+        letter-spacing: 1px;
+    }
+    
+    /* Expanders */
+    [data-testid="stExpander"] {
+        border: 1px solid #222222 !important;
+        border-radius: 0px !important;
+        background-color: #000000 !important;
+    }
+    .streamlit-expanderHeader {
+        font-weight: 700 !important;
+        text-transform: uppercase !important;
+        color: #ffffff !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# --- 2. HEADER ---
+st.markdown('<div class="ye-title">S P U B</div>', unsafe_allow_html=True)
+st.markdown('<div class="ye-subtitle">Data Extraction Engine // Y-01</div>', unsafe_allow_html=True)
 
 KEW_TEMPLATE = "KEW PS7 empty.xlsx"
 LAMP_TEMPLATE = "Lampiran 2 empty.xlsx"
 
-LAMP_CAPACITY = 19   # Rows 10 to 28
-KEW_CAPACITY = 17    # Rows 17 to 33
+LAMP_CAPACITY = 19
+KEW_CAPACITY = 17
 
 thin_border = Border(
     left=Side(style='thin', color='000000'), right=Side(style='thin', color='000000'),
@@ -27,8 +137,9 @@ thin_border = Border(
 if "batch_results" not in st.session_state:
     st.session_state["batch_results"] = None
 
+# --- 3. EXTRACTION LOGIC ---
 def extract_data_from_pdf(pdf_stream):
-    patient_data = {"Nama": "Unknown", "No KP": "", "Tarikh": "13/10/2026", "Drugs": []}
+    patient_data = {"Nama": "UNKNOWN", "No KP": "", "Tarikh": "13/10/2026", "Drugs": []}
     
     if hasattr(pdf_stream, "seek"):
         pdf_stream.seek(0)
@@ -43,7 +154,7 @@ def extract_data_from_pdf(pdf_stream):
     name_match = re.search(r"Nama:\s*(.*)", full_text)
     kp_match = re.search(r"No\.\s*KP:\s*(\d+)", full_text)
     if name_match: 
-        patient_data["Nama"] = name_match.group(1).strip()
+        patient_data["Nama"] = name_match.group(1).strip().upper()
     if kp_match: 
         patient_data["No KP"] = kp_match.group(1).strip()
 
@@ -137,8 +248,7 @@ def build_lampiran_page(patient_groups_in_page, template_path, output_path):
     for p in patient_groups_in_page:
         drugs = p["Drugs"]
         count = len(drugs)
-        if count == 0:
-            continue
+        if count == 0: continue
         end_row = current_row + count - 1
 
         sheet[f'A{current_row}'] = patient_number
@@ -177,22 +287,21 @@ def build_lampiran_page(patient_groups_in_page, template_path, output_path):
 
     wb.save(output_path)
 
-st.write("---")
-
+# --- 4. INTERFACE ---
 uploaded_pdfs = st.file_uploader(
-    "Upload Patient SPUB PDFs (Single or Multiple)", 
+    "PROVIDE ARCHIVES (PDF)", 
     type=["pdf"], 
     accept_multiple_files=True
 )
 
 if uploaded_pdfs:
-    st.info(f"Loaded {len(uploaded_pdfs)} PDF file(s).")
+    st.info(f"INPUT RECEIVED: {len(uploaded_pdfs)} DOCUMENT(S).")
 
     if not os.path.exists(KEW_TEMPLATE) or not os.path.exists(LAMP_TEMPLATE):
-        st.error(f"Cannot find: `{KEW_TEMPLATE}` or `{LAMP_TEMPLATE}` in repository root.")
+        st.error(f"SYSTEM ERROR: TEMPLATES MISSING.")
     else:
-        if st.button("Generate Excel Batches", type="primary", use_container_width=True):
-            with st.spinner("Extracting and mapping patient data..."):
+        if st.button("INITIALIZE EXTRACTION", type="primary", use_container_width=True):
+            with st.spinner("PROCESSING DATA..."):
                 all_patients = []
                 for pdf_file in uploaded_pdfs:
                     p_data = extract_data_from_pdf(pdf_file)
@@ -201,7 +310,7 @@ if uploaded_pdfs:
                 total_drugs_all = sum(len(p["Drugs"]) for p in all_patients)
                 
                 if total_drugs_all == 0:
-                    st.error("⚠️ No medications could be detected in the uploaded PDF. Please make sure the uploaded PDF contains selectable text.")
+                    st.error("EXTRACTION FAILED. NO USABLE TEXT FOUND.")
                     st.session_state["batch_results"] = None
                 else:
                     generated_files_dict = {}
@@ -212,8 +321,7 @@ if uploaded_pdfs:
 
                     for patient in all_patients:
                         remaining_drugs = list(patient["Drugs"])
-                        if not remaining_drugs:
-                            continue
+                        if not remaining_drugs: continue
                         while remaining_drugs:
                             space_left = LAMP_CAPACITY - current_page_used_rows
                             if space_left <= 0:
@@ -237,30 +345,27 @@ if uploaded_pdfs:
                         lampiran_pages.append(current_page_patients)
 
                     for page_idx, page_patients in enumerate(lampiran_pages):
-                        suffix = f"_Page_{page_idx+1}" if len(lampiran_pages) > 1 else ""
-                        out_name = f"Lampiran2_Batch{suffix}.xlsx"
+                        suffix = f"_PT_{page_idx+1}" if len(lampiran_pages) > 1 else ""
+                        out_name = f"LAMPIRAN_2{suffix}.xlsx"
                         build_lampiran_page(page_patients, LAMP_TEMPLATE, out_name)
                         with open(out_name, "rb") as f:
                             generated_files_dict[out_name] = f.read()
-                        if os.path.exists(out_name):
-                            os.remove(out_name)
+                        if os.path.exists(out_name): os.remove(out_name)
 
                     all_drugs_flat = []
-                    for p in all_patients:
-                        all_drugs_flat.extend(p["Drugs"])
+                    for p in all_patients: all_drugs_flat.extend(p["Drugs"])
 
                     kew_chunks = [all_drugs_flat[i:i + KEW_CAPACITY] for i in range(0, len(all_drugs_flat), KEW_CAPACITY)]
                     total_counter = 1
 
                     for page_idx, chunk in enumerate(kew_chunks):
-                        suffix = f"_Page_{page_idx+1}" if len(kew_chunks) > 1 else ""
-                        out_name = f"KEW_PS7_Batch{suffix}.xlsx"
+                        suffix = f"_PT_{page_idx+1}" if len(kew_chunks) > 1 else ""
+                        out_name = f"KEW_PS7{suffix}.xlsx"
                         build_kew_page(chunk, KEW_TEMPLATE, out_name, start_index=total_counter)
                         total_counter += len(chunk)
                         with open(out_name, "rb") as f:
                             generated_files_dict[out_name] = f.read()
-                        if os.path.exists(out_name):
-                            os.remove(out_name)
+                        if os.path.exists(out_name): os.remove(out_name)
 
                     zip_buffer = io.BytesIO()
                     with zipfile.ZipFile(zip_buffer, "w") as zf:
@@ -274,31 +379,31 @@ if uploaded_pdfs:
                         "zip": zip_data
                     }
 
+# --- 5. RESULTS DISPLAY ---
 if st.session_state["batch_results"]:
     results = st.session_state["batch_results"]
     patients = results["patients"]
     files = results["files"]
     zip_bytes = results["zip"]
 
-    st.success(f"Successfully processed {len(patients)} patient(s) into {len(files)} page(s)!")
+    st.success(f"PROCESS COMPLETE. {len(files)} TEMPLATES GENERATED.")
 
-    st.subheader("📋 Extracted Patient Data Preview")
+    st.markdown('<br><div class="ye-subtitle">DATA LOG</div>', unsafe_allow_html=True)
     for p in patients:
-        with st.expander(f"👤 Patient: {p['Nama']} (IC: {p['No KP']}) — {len(p['Drugs'])} Drug(s)", expanded=True):
+        with st.expander(f"{p['Nama']} // {p['No KP']} // {len(p['Drugs'])} DRUGS", expanded=False):
             if p["Drugs"]:
                 st.dataframe(p["Drugs"], use_container_width=True)
             else:
-                st.warning("No drug rows could be parsed for this patient.")
+                st.warning("EMPTY RECORD.")
 
-    st.write("---")
-    st.subheader("📥 Download Generated Sheets")
+    st.markdown('<br><div class="ye-subtitle">EXPORT ARCHIVES</div>', unsafe_allow_html=True)
 
     cols = st.columns(2)
     file_names = list(files.keys())
     for idx, fname in enumerate(file_names):
         with cols[idx % 2]:
             st.download_button(
-                label=f"⬇️ {fname}",
+                label=f"{fname}",
                 data=files[fname],
                 file_name=fname,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -307,9 +412,9 @@ if st.session_state["batch_results"]:
             )
 
     st.download_button(
-        label="📦 Download All Pages as ZIP",
+        label="DOWNLOAD MASTER ARCHIVE (ZIP)",
         data=zip_bytes,
-        file_name="SPUB_Processed_Batch.zip",
+        file_name="SPUB_MASTER_ARCHIVE.zip",
         mime="application/zip",
         key="dl_zip_all",
         use_container_width=True
