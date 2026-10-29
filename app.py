@@ -179,4 +179,3 @@ if uploaded_pdf is not None:
 
             if os.path.exists("temp_pdf.pdf"):
                 os.remove("temp_pdf.pdf")
-EOF
