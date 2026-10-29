@@ -9,7 +9,7 @@ import os
 import io
 import zipfile
 
-# --- 1. CORE SETUP & BRUTALIST CSS INJECTION ---
+# --- 1. CORE SETUP & SAFE BRUTALIST CSS ---
 st.set_page_config(page_title="SPUB", layout="centered")
 
 st.markdown("""
@@ -19,62 +19,57 @@ st.markdown("""
     header {visibility: hidden;}
     footer {visibility: hidden;}
     
-    /* Base Aesthetic - Absolute Black & White */
+    /* Base Aesthetic */
     .stApp {
         background-color: #000000;
         color: #ffffff;
-        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
     }
     
-    /* Typography Overrides */
-    h1, h2, h3, p, span, div {
+    /* Safe Typography Overrides */
+    h1, h2, h3, p, label {
         font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif !important;
+        text-transform: uppercase;
         letter-spacing: 1px;
     }
     
-    /* The Main Title */
+    /* Headers */
     .ye-title {
-        font-size: 4rem;
+        font-size: 3rem;
         font-weight: 900;
-        text-transform: uppercase;
-        letter-spacing: 0.2rem;
-        border-bottom: 2px solid #333333;
-        padding-bottom: 10px;
-        margin-bottom: 40px;
-        margin-top: -50px;
+        letter-spacing: 4px;
+        margin-top: -40px;
+        margin-bottom: 0px;
     }
     
     .ye-subtitle {
-        color: #888888;
-        font-size: 0.9rem;
-        text-transform: uppercase;
+        color: #666666;
+        font-size: 0.85rem;
         letter-spacing: 2px;
         margin-bottom: 40px;
     }
 
-    /* Buttons - Sharp, Blocky, Inverted */
+    /* Primary Action Button */
     .stButton > button {
         background-color: #ffffff !important;
         color: #000000 !important;
         border-radius: 0px !important;
         border: none !important;
         font-weight: 800 !important;
-        text-transform: uppercase !important;
         letter-spacing: 2px !important;
-        padding: 20px !important;
-        transition: opacity 0.2s;
+        padding: 15px !important;
+        transition: all 0.2s ease-in-out;
     }
     .stButton > button:hover {
-        opacity: 0.7;
+        background-color: #cccccc !important;
     }
     
+    /* Secondary/Download Buttons */
     .stDownloadButton > button {
-        background-color: #000000 !important;
+        background-color: transparent !important;
         color: #ffffff !important;
-        border: 2px solid #ffffff !important;
+        border: 1px solid #ffffff !important;
         border-radius: 0px !important;
-        font-weight: 800 !important;
-        text-transform: uppercase !important;
+        font-weight: 700 !important;
         letter-spacing: 1px !important;
     }
     .stDownloadButton > button:hover {
@@ -82,46 +77,40 @@ st.markdown("""
         color: #000000 !important;
     }
 
-    /* File Uploader */
+    /* File Uploader Container */
     [data-testid="stFileUploader"] {
-        background-color: #050505;
-        border: 1px solid #333333;
+        background-color: transparent !important;
+        border: 1px dashed #444444;
         border-radius: 0px;
-        padding: 30px;
-    }
-    [data-testid="stFileUploadDropzone"] {
-        border: none !important;
-        background: transparent !important;
+        padding: 20px;
     }
 
-    /* Alerts and Info Boxes */
-    .stAlert {
-        background-color: #0a0a0a !important;
-        color: #ffffff !important;
+    /* Alerts (Info/Success/Error boxes) */
+    [data-testid="stAlert"] {
+        background-color: transparent !important;
         border: 1px solid #444444 !important;
         border-radius: 0px !important;
-        text-transform: uppercase;
-        font-size: 0.8rem;
-        letter-spacing: 1px;
+        color: #ffffff !important;
     }
     
-    /* Expanders */
+    /* Expanders (Patient Data Tabs) */
     [data-testid="stExpander"] {
-        border: 1px solid #222222 !important;
+        border: 1px solid #333333 !important;
         border-radius: 0px !important;
-        background-color: #000000 !important;
+        background-color: transparent !important;
     }
+    
     .streamlit-expanderHeader {
-        font-weight: 700 !important;
-        text-transform: uppercase !important;
+        font-weight: 600 !important;
         color: #ffffff !important;
+        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif !important;
     }
 </style>
 """, unsafe_allow_html=True)
 
 # --- 2. HEADER ---
 st.markdown('<div class="ye-title">S P U B</div>', unsafe_allow_html=True)
-st.markdown('<div class="ye-subtitle">Data Extraction Engine // Y-01</div>', unsafe_allow_html=True)
+st.markdown('<div class="ye-subtitle">DATA EXTRACTION ENGINE</div>', unsafe_allow_html=True)
 
 KEW_TEMPLATE = "KEW PS7 empty.xlsx"
 LAMP_TEMPLATE = "Lampiran 2 empty.xlsx"
@@ -388,7 +377,7 @@ if st.session_state["batch_results"]:
 
     st.success(f"PROCESS COMPLETE. {len(files)} TEMPLATES GENERATED.")
 
-    st.markdown('<br><div class="ye-subtitle">DATA LOG</div>', unsafe_allow_html=True)
+    st.markdown('<br><div class="ye-subtitle" style="margin-bottom: 10px;">DATA LOG</div>', unsafe_allow_html=True)
     for p in patients:
         with st.expander(f"{p['Nama']} // {p['No KP']} // {len(p['Drugs'])} DRUGS", expanded=False):
             if p["Drugs"]:
@@ -396,7 +385,7 @@ if st.session_state["batch_results"]:
             else:
                 st.warning("EMPTY RECORD.")
 
-    st.markdown('<br><div class="ye-subtitle">EXPORT ARCHIVES</div>', unsafe_allow_html=True)
+    st.markdown('<br><div class="ye-subtitle" style="margin-bottom: 20px;">EXPORT ARCHIVES</div>', unsafe_allow_html=True)
 
     cols = st.columns(2)
     file_names = list(files.keys())
