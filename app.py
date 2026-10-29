@@ -152,4 +152,165 @@ def build_lampiran_page(patient_groups_in_page, template_path, output_path):
 
         if count > 1:
             for col in ['A', 'B', 'C', 'D', 'E', 'F']:
-                sheet.merge_cells(start_row=current_row), start_column=column_index_from_string(col),
+                sheet.merge_cells(start_row=current_row, start_column=column_index_from_string(col),
+                                  end_row=end_row, end_column=column_index_from_string(col))
+        for col in ['A', 'B', 'C', 'D', 'E', 'F']:
+            sheet[f'{col}{current_row}'].font = font_style
+            sheet[f'{col}{current_row}'].alignment = align_center
+
+        for idx, drug in enumerate(drugs):
+            r = current_row + idx
+            cell_g = sheet[f'G{r}']
+            cell_g.value = drug["Name"]
+            cell_g.font, cell_g.alignment = font_style, align_left
+            
+            cell_l = sheet[f'L{r}']
+            cell_l.value = drug["Dosage"]
+            cell_l.font, cell_l.alignment = font_style, align_center
+            
+            cell_m = sheet[f'M{r}']
+            cell_m.value = int(drug["Quantity"]) if str(drug["Quantity"]).isdigit() else drug["Quantity"]
+            cell_m.font, cell_m.alignment = font_style, align_center
+
+        current_row += count
+        patient_number += 1
+
+    wb.save(output_path)
+
+st.write("---")
+
+uploaded_pdfs = st.file_uploader(
+    "Upload Patient SPUB PDFs (Single or Multiple)", 
+    type=["pdf"], 
+    accept_multiple_files=True
+)
+
+if uploaded_pdfs:
+    st.info(f"Loaded {len(uploaded_pdfs)} PDF file(s).")
+
+    if not os.path.exists(KEW_TEMPLATE) or not os.path.exists(LAMP_TEMPLATE):
+        st.error(f"Cannot find: `{KEW_TEMPLATE}` or `{LAMP_TEMPLATE}` in repository root.")
+    else:
+        if st.button("Generate Excel Batches", type="primary", use_container_width=True):
+            with st.spinner("Extracting and mapping patient data..."):
+                all_patients = []
+                for pdf_file in uploaded_pdfs:
+                    p_data = extract_data_from_pdf(pdf_file)
+                    all_patients.append(p_data)
+
+                total_drugs_all = sum(len(p["Drugs"]) for p in all_patients)
+                
+                if total_drugs_all == 0:
+                    st.error("⚠️ No medications could be detected in the uploaded PDF. Please make sure the uploaded PDF contains selectable text.")
+                    st.session_state["batch_results"] = None
+                else:
+                    generated_files_dict = {}
+
+                    lampiran_pages = []
+                    current_page_patients = []
+                    current_page_used_rows = 0
+
+                    for patient in all_patients:
+                        remaining_drugs = list(patient["Drugs"])
+                        if not remaining_drugs:
+                            continue
+                        while remaining_drugs:
+                            space_left = LAMP_CAPACITY - current_page_used_rows
+                            if space_left <= 0:
+                                lampiran_pages.append(current_page_patients)
+                                current_page_patients = []
+                                current_page_used_rows = 0
+                                space_left = LAMP_CAPACITY
+
+                            take_drugs = remaining_drugs[:space_left]
+                            remaining_drugs = remaining_drugs[space_left:]
+
+                            current_page_patients.append({
+                                "Nama": patient["Nama"],
+                                "No KP": patient["No KP"],
+                                "Tarikh": patient["Tarikh"],
+                                "Drugs": take_drugs
+                            })
+                            current_page_used_rows += len(take_drugs)
+
+                    if current_page_patients:
+                        lampiran_pages.append(current_page_patients)
+
+                    for page_idx, page_patients in enumerate(lampiran_pages):
+                        suffix = f"_Page_{page_idx+1}" if len(lampiran_pages) > 1 else ""
+                        out_name = f"Lampiran2_Batch{suffix}.xlsx"
+                        build_lampiran_page(page_patients, LAMP_TEMPLATE, out_name)
+                        with open(out_name, "rb") as f:
+                            generated_files_dict[out_name] = f.read()
+                        if os.path.exists(out_name):
+                            os.remove(out_name)
+
+                    all_drugs_flat = []
+                    for p in all_patients:
+                        all_drugs_flat.extend(p["Drugs"])
+
+                    kew_chunks = [all_drugs_flat[i:i + KEW_CAPACITY] for i in range(0, len(all_drugs_flat), KEW_CAPACITY)]
+                    total_counter = 1
+
+                    for page_idx, chunk in enumerate(kew_chunks):
+                        suffix = f"_Page_{page_idx+1}" if len(kew_chunks) > 1 else ""
+                        out_name = f"KEW_PS7_Batch{suffix}.xlsx"
+                        build_kew_page(chunk, KEW_TEMPLATE, out_name, start_index=total_counter)
+                        total_counter += len(chunk)
+                        with open(out_name, "rb") as f:
+                            generated_files_dict[out_name] = f.read()
+                        if os.path.exists(out_name):
+                            os.remove(out_name)
+
+                    zip_buffer = io.BytesIO()
+                    with zipfile.ZipFile(zip_buffer, "w") as zf:
+                        for filename, filedata in generated_files_dict.items():
+                            zf.writestr(filename, filedata)
+                    zip_data = zip_buffer.getvalue()
+
+                    st.session_state["batch_results"] = {
+                        "patients": all_patients,
+                        "files": generated_files_dict,
+                        "zip": zip_data
+                    }
+
+if st.session_state["batch_results"]:
+    results = st.session_state["batch_results"]
+    patients = results["patients"]
+    files = results["files"]
+    zip_bytes = results["zip"]
+
+    st.success(f"Successfully processed {len(patients)} patient(s) into {len(files)} page(s)!")
+
+    st.subheader("📋 Extracted Patient Data Preview")
+    for p in patients:
+        with st.expander(f"👤 Patient: {p['Nama']} (IC: {p['No KP']}) — {len(p['Drugs'])} Drug(s)", expanded=True):
+            if p["Drugs"]:
+                st.dataframe(p["Drugs"], use_container_width=True)
+            else:
+                st.warning("No drug rows could be parsed for this patient.")
+
+    st.write("---")
+    st.subheader("📥 Download Generated Sheets")
+
+    cols = st.columns(2)
+    file_names = list(files.keys())
+    for idx, fname in enumerate(file_names):
+        with cols[idx % 2]:
+            st.download_button(
+                label=f"⬇️ {fname}",
+                data=files[fname],
+                file_name=fname,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key=f"dl_{fname}",
+                use_container_width=True
+            )
+
+    st.download_button(
+        label="📦 Download All Pages as ZIP",
+        data=zip_bytes,
+        file_name="SPUB_Processed_Batch.zip",
+        mime="application/zip",
+        key="dl_zip_all",
+        use_container_width=True
+    )
