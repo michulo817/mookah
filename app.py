@@ -189,4 +189,4 @@ uploaded_pdfs = st.file_uploader(
 )
 
 if uploaded_pdfs:
-    st.info(f"Loaded {len(uploaded_pdfs)} PDF file()
+st.info(f"Loaded {len(uploaded_pdfs)} PDF file(s).")
