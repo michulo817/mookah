@@ -7,23 +7,18 @@ from pypdf import PdfReader
 import shutil
 import os
 
-# --- PAGE SETUP ---
 st.set_page_config(page_title="SPUB Generator", page_icon="💊", layout="centered")
 st.title("📄 SPUB to Excel Generator")
-st.markdown("Upload the patient's SPUB PDF. The app will automatically map the data into your default templates.")
+st.write("Upload the patient's SPUB PDF below. The app will automatically map the data into your default templates.")
 
-# --- TEMPLATE PATHS ---
-# The app will automatically look for these exact files in the same folder
 KEW_TEMPLATE = "KEW PS7 empty_2.xlsx"
 LAMP_TEMPLATE = "Lampiran 2 empty_2.xlsx"
 
-# --- BORDER STYLING ---
 thin_border = Border(
     left=Side(style='thin', color='000000'), right=Side(style='thin', color='000000'),
     top=Side(style='thin', color='000000'), bottom=Side(style='thin', color='000000')
 )
 
-# --- EXTRACTION LOGIC ---
 def extract_data(pdf_path):
     patient_data = {"Nama": "Unknown_Patient", "No KP": "", "Tarikh": "13/10/2026", "Drugs": []}
     full_text = ""
@@ -45,7 +40,7 @@ def extract_data(pdf_path):
                 qty_idx = idx - 1
                 break
         if qty_idx != -1:
-            qty = lines[idx] if idx != -1 else lines[qty_idx] # Fallback protection
+            qty = lines[qty_idx]
             last_paren_idx = -1
             for idx in range(qty_idx - 1, -1, -1):
                 if ')' in lines[idx]:
@@ -60,7 +55,7 @@ def extract_data(pdf_path):
             else:
                 drug_name = lines[0]
                 dosage = " ".join(lines[1:qty_idx])
-            patient_data["Drugs"].append({"Name": drug_name, "Dosage": dosage, "Quantity": lines[qty_idx]})
+            patient_data["Drugs"].append({"Name": drug_name, "Dosage": dosage, "Quantity": qty})
     return patient_data
 
 def process_kew(patient_data, template_path, output_name):
@@ -106,4 +101,7 @@ def process_lampiran(patient_data, template_path, output_name):
 
     for merged_range in list(sheet.merged_cells.ranges):
         if 10 <= merged_range.min_row <= 28:
-            sheet.unmerge_cells
+            sheet.unmerge_cells(str(merged_range))
+            
+    for r in range(10, 29):
+        for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'L', 'M']: sheet
