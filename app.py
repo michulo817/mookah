@@ -10,7 +10,12 @@ import os
 # --- PAGE SETUP ---
 st.set_page_config(page_title="SPUB Generator", page_icon="💊", layout="centered")
 st.title("📄 SPUB to Excel Generator")
-st.markdown("Upload your empty templates and the patient's SPUB PDF. The app will neatly extract and format the data for you to download.")
+st.markdown("Upload the patient's SPUB PDF. The app will automatically map the data into your default templates.")
+
+# --- TEMPLATE PATHS ---
+# The app will automatically look for these exact files in the same folder
+KEW_TEMPLATE = "KEW PS7 empty_2.xlsx"
+LAMP_TEMPLATE = "Lampiran 2 empty_2.xlsx"
 
 # --- BORDER STYLING ---
 thin_border = Border(
@@ -40,7 +45,7 @@ def extract_data(pdf_path):
                 qty_idx = idx - 1
                 break
         if qty_idx != -1:
-            qty = lines[qty_idx]
+            qty = lines[idx] if idx != -1 else lines[qty_idx] # Fallback protection
             last_paren_idx = -1
             for idx in range(qty_idx - 1, -1, -1):
                 if ')' in lines[idx]:
@@ -55,7 +60,7 @@ def extract_data(pdf_path):
             else:
                 drug_name = lines[0]
                 dosage = " ".join(lines[1:qty_idx])
-            patient_data["Drugs"].append({"Name": drug_name, "Dosage": dosage, "Quantity": qty})
+            patient_data["Drugs"].append({"Name": drug_name, "Dosage": dosage, "Quantity": lines[qty_idx]})
     return patient_data
 
 def process_kew(patient_data, template_path, output_name):
@@ -101,106 +106,4 @@ def process_lampiran(patient_data, template_path, output_name):
 
     for merged_range in list(sheet.merged_cells.ranges):
         if 10 <= merged_range.min_row <= 28:
-            sheet.unmerge_cells(str(merged_range))
-            
-    for r in range(10, 29):
-        for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'L', 'M']: sheet[f'{col}{r}'] = None
-        for c_idx in range(1, 14): sheet.cell(row=r, column=c_idx).border = thin_border
-
-    start_row = 10
-    num_drugs = min(len(patient_data["Drugs"]), 19) 
-    end_row = start_row + num_drugs - 1
-
-    sheet[f'A{start_row}'] = 1
-    sheet[f'B{start_row}'] = patient_data["Tarikh"]
-    sheet[f'C{start_row}'] = "HOSPITAL BINTULU"
-    sheet[f'D{start_row}'] = patient_data["Nama"]
-    
-    ic_cell = sheet[f'E{start_row}']
-    ic_cell.value = str(patient_data["No KP"])
-    ic_cell.number_format = '@' 
-    
-    if num_drugs > 1:
-        for col in ['A', 'B', 'C', 'D', 'E', 'F']:
-            sheet.merge_cells(start_row=start_row, start_column=column_index_from_string(col),
-                              end_row=end_row, end_column=column_index_from_string(col))
-            cell = sheet[f'{col}{start_row}']
-            cell.font, cell.alignment = font_style, align_center
-
-    for i, drug in enumerate(patient_data["Drugs"]):
-        if i >= 19: break
-        r = start_row + i
-        cell_g = sheet[f'G{r}']
-        cell_g.value = drug["Name"]
-        cell_g.font, cell_g.alignment = font_style, align_left
-        
-        cell_l = sheet[f'L{r}']
-        cell_l.value = drug["Dosage"]
-        cell_l.font, cell_l.alignment = font_style, align_center
-        
-        cell_m = sheet[f'M{r}']
-        cell_m.value = int(drug["Quantity"]) if drug["Quantity"].isdigit() else drug["Quantity"]
-        cell_m.font, cell_m.alignment = font_style, align_center
-    wb.save(output_name)
-
-# --- UPGRADED UI APP LAYOUT ---
-st.sidebar.header("⚙️ Master Templates")
-st.sidebar.info("Upload your empty Excel templates here. These serve as the master layout for this session.")
-uploaded_kew = st.sidebar.file_uploader("KEW PS7 Template", type="xlsx")
-uploaded_lamp = st.sidebar.file_uploader("Lampiran 2 Template", type="xlsx")
-
-st.markdown("### 1. Upload Patient SPUB")
-uploaded_pdf = st.file_uploader("Drop the patient's SPUB PDF here", type="pdf", label_visibility="collapsed")
-
-if uploaded_pdf and uploaded_kew and uploaded_lamp:
-    st.markdown("### 2. Preview & Generate")
-    
-    # Wide button
-    if st.button("Extract & Format Files", type="primary", use_container_width=True):
-        
-        # Animated status box instead of a basic spinner
-        with st.status("Processing documents...", expanded=True) as status:
-            st.write("Reading PDF data...")
-            with open("temp_pdf.pdf", "wb") as f: f.write(uploaded_pdf.getbuffer())
-            with open("temp_kew.xlsx", "wb") as f: f.write(uploaded_kew.getbuffer())
-            with open("temp_lamp.xlsx", "wb") as f: f.write(uploaded_lamp.getbuffer())
-
-            patient_data = extract_data("temp_pdf.pdf")
-            
-            st.write("Formatting KEW PS7 & Lampiran 2...")
-            safe_name = re.sub(r'[^a-zA-Z0-9]', '_', patient_data['Nama'])
-            out_kew = f"KEW_PS7_{safe_name}.xlsx"
-            out_lamp = f"Lampiran2_{safe_name}.xlsx"
-
-            process_kew(patient_data, "temp_kew.xlsx", out_kew)
-            process_lampiran(patient_data, "temp_lamp.xlsx", out_lamp)
-            
-            status.update(label="Extraction Complete!", state="complete", expanded=False)
-
-        # Dashboard Metrics
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Patient Name", patient_data["Nama"])
-        col2.metric("IC Number", patient_data["No KP"])
-        col3.metric("Drugs Extracted", len(patient_data["Drugs"]))
-
-        # Live Data Preview Table
-        with st.expander("👀 Preview Extracted Medications", expanded=True):
-            st.dataframe(patient_data["Drugs"], use_container_width=True)
-
-        # Full-width Download Buttons
-        st.success("Your perfectly formatted Excel files are ready.")
-        dl_col1, dl_col2 = st.columns(2)
-        with dl_col1:
-            with open(out_kew, "rb") as f:
-                st.download_button("⬇️ Download KEW PS7", f, file_name=out_kew, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-        with dl_col2:
-            with open(out_lamp, "rb") as f:
-                st.download_button("⬇️ Download Lampiran 2", f, file_name=out_lamp, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-            
-        # Clean up temp files behind the scenes
-        os.remove("temp_pdf.pdf")
-        os.remove("temp_kew.xlsx")
-        os.remove("temp_lamp.xlsx")
-
-elif not (uploaded_kew and uploaded_lamp):
-    st.warning("👈 Please upload your empty Excel templates in the sidebar to begin.")
+            sheet.unmerge_cells
