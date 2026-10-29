@@ -152,4 +152,4 @@ def build_lampiran_page(patient_groups_in_page, template_path, output_path):
 
         if count > 1:
             for col in ['A', 'B', 'C', 'D', 'E', 'F']:
-                sheet.merge_cells(start_row=current_row, start_column=column_index_from_string(col),
+                sheet.merge_cells(start_row=current_row), start_column=column_index_from_string(col),
