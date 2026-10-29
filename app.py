@@ -11,7 +11,7 @@ import zipfile
 
 st.set_page_config(page_title="SPUB Multi-Batch Generator", page_icon="💊", layout="wide")
 st.title("📄 SPUB Multi-Batch Generator")
-st.write("Upload one or multiple patient SPUB PDFs. If patient medications exceed the fixed table capacity, the system automatically creates sequential pages (Page 1, Page 2, etc.) to keep the templates completely intact.")
+st.write("Upload one or multiple patient SPUB PDFs. If patient medications exceed table capacity, sequential pages are created while preserving the layout.")
 
 KEW_TEMPLATE = "KEW PS7 empty.xlsx"
 LAMP_TEMPLATE = "Lampiran 2 empty.xlsx"
@@ -24,12 +24,16 @@ thin_border = Border(
     top=Side(style='thin', color='000000'), bottom=Side(style='thin', color='000000')
 )
 
+# Initialize persistent session state
+if "batch_results" not in st.session_state:
+    st.session_state["batch_results"] = None
+
 def extract_data_from_pdf(pdf_stream):
     patient_data = {"Nama": "Unknown", "No KP": "", "Tarikh": "13/10/2026", "Drugs": []}
     full_text = ""
     reader = PdfReader(pdf_stream)
     for page in reader.pages:
-        full_text += page.extract_text() or "" + "\n"
+        full_text += (page.extract_text() or "") + "\n"
 
     name_match = re.search(r"Nama:\s*(.*)", full_text)
     kp_match = re.search(r"No\.\s*KP:\s*(\d+)", full_text)
@@ -74,7 +78,6 @@ def build_kew_page(drugs_chunk, template_path, output_path, start_index=1):
     align_left = Alignment(vertical='top', horizontal='left', wrap_text=True)
     align_center = Alignment(vertical='top', horizontal='center', wrap_text=True)
 
-    # Clean existing rows 17 to 33
     for merged_range in list(sheet.merged_cells.ranges):
         if 17 <= merged_range.min_row <= 33:
             sheet.unmerge_cells(str(merged_range))
@@ -111,7 +114,6 @@ def build_lampiran_page(patient_groups_in_page, template_path, output_path):
     align_center = Alignment(vertical='center', horizontal='center', wrap_text=True)
     align_left = Alignment(vertical='center', horizontal='left', wrap_text=True)
 
-    # Clean rows 10 to 28
     for merged_range in list(sheet.merged_cells.ranges):
         if 10 <= merged_range.min_row <= 28:
             sheet.unmerge_cells(str(merged_range))
@@ -187,9 +189,9 @@ if uploaded_pdfs:
                     p_data = extract_data_from_pdf(pdf_file)
                     all_patients.append(p_data)
 
-                generated_files = []
+                generated_files_dict = {}
 
-                # --- 1. PROCESS LAMPIRAN 2 (Max 19 rows per page) ---
+                # 1. PROCESS LAMPIRAN 2 (Max 19 rows per page)
                 lampiran_pages = []
                 current_page_patients = []
                 current_page_used_rows = 0
@@ -222,9 +224,12 @@ if uploaded_pdfs:
                     suffix = f"_Page_{page_idx+1}" if len(lampiran_pages) > 1 else ""
                     out_name = f"Lampiran2_Batch{suffix}.xlsx"
                     build_lampiran_page(page_patients, LAMP_TEMPLATE, out_name)
-                    generated_files.append(out_name)
+                    with open(out_name, "rb") as f:
+                        generated_files_dict[out_name] = f.read()
+                    if os.path.exists(out_name):
+                        os.remove(out_name)
 
-                # --- 2. PROCESS KEW PS-7 (Max 17 rows per page) ---
+                # 2. PROCESS KEW PS-7 (Max 17 rows per page)
                 all_drugs_flat = []
                 for p in all_patients:
                     all_drugs_flat.extend(p["Drugs"])
@@ -237,41 +242,39 @@ if uploaded_pdfs:
                     out_name = f"KEW_PS7_Batch{suffix}.xlsx"
                     build_kew_page(chunk, KEW_TEMPLATE, out_name, start_index=total_counter)
                     total_counter += len(chunk)
-                    generated_files.append(out_name)
+                    with open(out_name, "rb") as f:
+                        generated_files_dict[out_name] = f.read()
+                    if os.path.exists(out_name):
+                        os.remove(out_name)
 
-            st.success(f"Successfully processed {len(all_patients)} patient(s) across {len(generated_files)} template page(s)!")
+                # Prepare ZIP Archive in memory
+                zip_buffer = io.BytesIO()
+                with zipfile.ZipFile(zip_buffer, "w") as zf:
+                    for filename, filedata in generated_files_dict.items():
+                        zf.writestr(filename, filedata)
+                zip_data = zip_buffer.getvalue()
 
-            # --- PREVIEWS ---
-            for p in all_patients:
-                with st.expander(f"👤 Patient: {p['Nama']} (IC: {p['No KP']}) - {len(p['Drugs'])} Drugs", expanded=False):
-                    st.dataframe(p["Drugs"], use_container_width=True)
+                # Save entire state
+                st.session_state["batch_results"] = {
+                    "patients": all_patients,
+                    "files": generated_files_dict,
+                    "zip": zip_data
+                }
 
-            st.write("---")
-            st.subheader("📥 Download Generated Sheets")
+# Render from session_state so it persists across button clicks and downloads
+if st.session_state["batch_results"]:
+    results = st.session_state["batch_results"]
+    patients = results["patients"]
+    files = results["files"]
+    zip_bytes = results["zip"]
 
-            # Individual download buttons
-            cols = st.columns(2)
-            for idx, file_name in enumerate(generated_files):
-                with cols[idx % 2]:
-                    with open(file_name, "rb") as f:
-                        st.download_button(
-                            label=f"⬇️ {file_name}",
-                            data=f.read(),
-                            file_name=file_name,
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            use_container_width=True
-                        )
+    st.success(f"Generated {len(files)} page(s) across {len(patients)} patient(s). Results will remain visible until new files are generated.")
 
-            # Zip archive download button
-            zip_buffer = io.BytesIO()
-            with zipfile.ZipFile(zip_buffer, "w") as zf:
-                for file_name in generated_files:
-                    zf.write(file_name, arcname=file_name)
-            zip_buffer.seek(0)
+    for p in patients:
+        with st.expander(f"👤 Patient: {p['Nama']} (IC: {p['No KP']}) — {len(p['Drugs'])} Drugs", expanded=False):
+            st.dataframe(p["Drugs"], use_container_width=True)
 
-            st.download_button(
-                label="📦 Download All Pages as ZIP",
-                data=zip_buffer,
-                file_name="SPUB_Processed_Batch.zip",
-                mime="application/zip",
-                use_container_width=True)
+    st.write("---")
+    st.subheader("📥 Download Generated Sheets")
+
+    cols = st.columns(2
