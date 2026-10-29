@@ -6,30 +6,37 @@ from openpyxl.utils import column_index_from_string
 from pypdf import PdfReader
 import shutil
 import os
+import io
+import zipfile
 
-st.set_page_config(page_title="SPUB Generator", page_icon="💊", layout="wide")
-st.title("📄 SPUB to Excel Generator")
-st.write("Upload the patient's SPUB PDF below. The app will automatically map the data into your default templates.")
+st.set_page_config(page_title="SPUB Multi-Batch Generator", page_icon="💊", layout="wide")
+st.title("📄 SPUB Multi-Batch Generator")
+st.write("Upload one or multiple patient SPUB PDFs. If patient medications exceed the fixed table capacity, the system automatically creates sequential pages (Page 1, Page 2, etc.) to keep the templates completely intact.")
 
 KEW_TEMPLATE = "KEW PS7 empty.xlsx"
 LAMP_TEMPLATE = "Lampiran 2 empty.xlsx"
+
+LAMP_CAPACITY = 19   # Rows 10 to 28
+KEW_CAPACITY = 17    # Rows 17 to 33
 
 thin_border = Border(
     left=Side(style='thin', color='000000'), right=Side(style='thin', color='000000'),
     top=Side(style='thin', color='000000'), bottom=Side(style='thin', color='000000')
 )
 
-def extract_data(pdf_path):
-    patient_data = {"Nama": "Unknown_Patient", "No KP": "", "Tarikh": "13/10/2026", "Drugs": []}
+def extract_data_from_pdf(pdf_stream):
+    patient_data = {"Nama": "Unknown", "No KP": "", "Tarikh": "13/10/2026", "Drugs": []}
     full_text = ""
-    reader = PdfReader(pdf_path)
+    reader = PdfReader(pdf_stream)
     for page in reader.pages:
-        full_text += page.extract_text() + "\n"
+        full_text += page.extract_text() or "" + "\n"
 
     name_match = re.search(r"Nama:\s*(.*)", full_text)
     kp_match = re.search(r"No\.\s*KP:\s*(\d+)", full_text)
-    if name_match: patient_data["Nama"] = name_match.group(1).strip()
-    if kp_match: patient_data["No KP"] = kp_match.group(1).strip()
+    if name_match: 
+        patient_data["Nama"] = name_match.group(1).strip()
+    if kp_match: 
+        patient_data["No KP"] = kp_match.group(1).strip()
 
     blocks = re.split(r'WD_FM\nED\n(?:\d+\.\n)?', full_text)
     for block in blocks[1:]:
@@ -58,28 +65,31 @@ def extract_data(pdf_path):
             patient_data["Drugs"].append({"Name": drug_name, "Dosage": dosage, "Quantity": qty})
     return patient_data
 
-def process_kew(patient_data, template_path, output_name):
-    shutil.copy(template_path, output_name)
-    wb = openpyxl.load_workbook(output_name)
+def build_kew_page(drugs_chunk, template_path, output_path, start_index=1):
+    shutil.copy(template_path, output_path)
+    wb = openpyxl.load_workbook(output_path)
     sheet = wb.active
+
     font_style = Font(name='Arial', size=10, bold=True)
     align_left = Alignment(vertical='top', horizontal='left', wrap_text=True)
     align_center = Alignment(vertical='top', horizontal='center', wrap_text=True)
 
+    # Clean existing rows 17 to 33
     for merged_range in list(sheet.merged_cells.ranges):
         if 17 <= merged_range.min_row <= 33:
             sheet.unmerge_cells(str(merged_range))
             
     for r in range(17, 34):
-        for c in ['A', 'B', 'C', 'D']: sheet[f'{c}{r}'] = None
+        for c in ['A', 'B', 'C', 'D']: 
+            sheet[f'{c}{r}'] = None
         sheet.merge_cells(f'B{r}:C{r}')
-        for c_idx in range(1, 16): sheet.cell(row=r, column=c_idx).border = thin_border
+        for c_idx in range(1, 16): 
+            sheet.cell(row=r, column=c_idx).border = thin_border
 
-    for i, drug in enumerate(patient_data["Drugs"]):
-        if i >= 17: break 
+    for i, drug in enumerate(drugs_chunk):
         r = 17 + i
         cell_a = sheet[f'A{r}']
-        cell_a.value = i + 1
+        cell_a.value = start_index + i
         cell_a.font, cell_a.alignment = font_style, align_center
         
         cell_b = sheet[f'B{r}']
@@ -87,95 +97,181 @@ def process_kew(patient_data, template_path, output_name):
         cell_b.font, cell_b.alignment = font_style, align_left
         
         cell_d = sheet[f'D{r}']
-        cell_d.value = int(drug["Quantity"]) if drug["Quantity"].isdigit() else drug["Quantity"]
+        cell_d.value = int(drug["Quantity"]) if str(drug["Quantity"]).isdigit() else drug["Quantity"]
         cell_d.font, cell_d.alignment = font_style, align_center
-    wb.save(output_name)
 
-def process_lampiran(patient_data, template_path, output_name):
-    shutil.copy(template_path, output_name)
-    wb = openpyxl.load_workbook(output_name)
+    wb.save(output_path)
+
+def build_lampiran_page(patient_groups_in_page, template_path, output_path):
+    shutil.copy(template_path, output_path)
+    wb = openpyxl.load_workbook(output_path)
     sheet = wb.active
+
     font_style = Font(name='Arial', size=8, bold=False)
     align_center = Alignment(vertical='center', horizontal='center', wrap_text=True)
     align_left = Alignment(vertical='center', horizontal='left', wrap_text=True)
 
+    # Clean rows 10 to 28
     for merged_range in list(sheet.merged_cells.ranges):
         if 10 <= merged_range.min_row <= 28:
             sheet.unmerge_cells(str(merged_range))
             
     for r in range(10, 29):
-        for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'L', 'M']: sheet[f'{col}{r}'] = None
-        for c_idx in range(1, 14): sheet.cell(row=r, column=c_idx).border = thin_border
+        for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'L', 'M']: 
+            sheet[f'{col}{r}'] = None
+        for c_idx in range(1, 14): 
+            sheet.cell(row=r, column=c_idx).border = thin_border
 
-    start_row = 10
-    num_drugs = min(len(patient_data["Drugs"]), 19) 
-    end_row = start_row + num_drugs - 1
+    current_row = 10
+    patient_number = 1
 
-    sheet[f'A{start_row}'] = 1
-    sheet[f'B{start_row}'] = patient_data["Tarikh"]
-    sheet[f'C{start_row}'] = "HOSPITAL BINTULU"
-    sheet[f'D{start_row}'] = patient_data["Nama"]
-    
-    ic_cell = sheet[f'E{start_row}']
-    ic_cell.value = str(patient_data["No KP"])
-    ic_cell.number_format = '@' 
-    
-    if num_drugs > 1:
-        for col in ['A', 'B', 'C', 'D', 'E']:
-            sheet.merge_cells(start_row=start_row, start_column=column_index_from_string(col),
-                              end_row=end_row, end_column=column_index_from_string(col))
-            cell = sheet[f'{col}{start_row}']
-            cell.font, cell.alignment = font_style, align_center
+    for p in patient_groups_in_page:
+        drugs = p["Drugs"]
+        count = len(drugs)
+        end_row = current_row + count - 1
 
-    for i, drug in enumerate(patient_data["Drugs"]):
-        if i >= 19: break
-        r = start_row + i
-        cell_g = sheet[f'G{r}']
-        cell_g.value = drug["Name"]
-        cell_g.font, cell_g.alignment = font_style, align_left
+        sheet[f'A{current_row}'] = patient_number
+        sheet[f'B{current_row}'] = p["Tarikh"]
+        sheet[f'C{current_row}'] = "HOSPITAL BINTULU"
+        sheet[f'D{current_row}'] = p["Nama"]
         
-        cell_l = sheet[f'L{r}']
-        cell_l.value = drug["Dosage"]
-        cell_l.font, cell_l.alignment = font_style, align_center
-        
-        cell_m = sheet[f'M{r}']
-        cell_m.value = int(drug["Quantity"]) if drug["Quantity"].isdigit() else drug["Quantity"]
-        cell_m.font, cell_m.alignment = font_style, align_center
-    wb.save(output_name)
+        ic_cell = sheet[f'E{current_row}']
+        ic_cell.value = str(p["No KP"])
+        ic_cell.number_format = '@'
+
+        if count > 1:
+            for col in ['A', 'B', 'C', 'D', 'E', 'F']:
+                sheet.merge_cells(start_row=current_row, start_column=column_index_from_string(col),
+                                  end_row=end_row, end_column=column_index_from_string(col))
+        for col in ['A', 'B', 'C', 'D', 'E', 'F']:
+            sheet[f'{col}{current_row}'].font = font_style
+            sheet[f'{col}{current_row}'].alignment = align_center
+
+        for idx, drug in enumerate(drugs):
+            r = current_row + idx
+            cell_g = sheet[f'G{r}']
+            cell_g.value = drug["Name"]
+            cell_g.font, cell_g.alignment = font_style, align_left
+            
+            cell_l = sheet[f'L{r}']
+            cell_l.value = drug["Dosage"]
+            cell_l.font, cell_l.alignment = font_style, align_center
+            
+            cell_m = sheet[f'M{r}']
+            cell_m.value = int(drug["Quantity"]) if str(drug["Quantity"]).isdigit() else drug["Quantity"]
+            cell_m.font, cell_m.alignment = font_style, align_center
+
+        current_row += count
+        patient_number += 1
+
+    wb.save(output_path)
 
 st.write("---")
 
-uploaded_pdf = st.file_uploader("Upload Patient SPUB PDF", type=["pdf"])
+uploaded_pdfs = st.file_uploader(
+    "Upload Patient SPUB PDFs (Single or Multiple)", 
+    type=["pdf"], 
+    accept_multiple_files=True
+)
 
-if uploaded_pdf is not None:
-    st.success("PDF uploaded!")
-    
+if uploaded_pdfs:
+    st.info(f"Loaded {len(uploaded_pdfs)} PDF file(s).")
+
     if not os.path.exists(KEW_TEMPLATE) or not os.path.exists(LAMP_TEMPLATE):
-        st.error(f"Cannot find: {KEW_TEMPLATE} or {LAMP_TEMPLATE}. Make sure they are in the SPUB_Project folder.")
+        st.error(f"Cannot find: `{KEW_TEMPLATE}` or `{LAMP_TEMPLATE}` in the repository root.")
     else:
-        if st.button("Generate Excel Files", type="primary"):
-            with st.spinner("Processing..."):
-                with open("temp_pdf.pdf", "wb") as f:
-                    f.write(uploaded_pdf.getbuffer())
+        if st.button("Generate Excel Batches", type="primary", use_container_width=True):
+            with st.spinner("Extracting and mapping patient data..."):
+                all_patients = []
+                for pdf_file in uploaded_pdfs:
+                    p_data = extract_data_from_pdf(pdf_file)
+                    all_patients.append(p_data)
 
-                patient_data = extract_data("temp_pdf.pdf")
-                safe_name = re.sub(r'[^a-zA-Z0-9]', '_', patient_data['Nama'])
-                out_kew = f"KEW_PS7_{safe_name}.xlsx"
-                out_lamp = f"Lampiran2_{safe_name}.xlsx"
+                generated_files = []
 
-                process_kew(patient_data, KEW_TEMPLATE, out_kew)
-                process_lampiran(patient_data, LAMP_TEMPLATE, out_lamp)
+                # --- 1. PROCESS LAMPIRAN 2 (Max 19 rows per page) ---
+                lampiran_pages = []
+                current_page_patients = []
+                current_page_used_rows = 0
 
-            st.write(f"**Patient:** {patient_data['Nama']} | **IC:** {patient_data['No KP']}")
-            st.dataframe(patient_data["Drugs"])
+                for patient in all_patients:
+                    remaining_drugs = list(patient["Drugs"])
+                    while remaining_drugs:
+                        space_left = LAMP_CAPACITY - current_page_used_rows
+                        if space_left <= 0:
+                            lampiran_pages.append(current_page_patients)
+                            current_page_patients = []
+                            current_page_used_rows = 0
+                            space_left = LAMP_CAPACITY
 
-            col1, col2 = st.columns(2)
-            with col1:
-                with open(out_kew, "rb") as f:
-                    st.download_button("Download KEW PS7", f, file_name=out_kew)
-            with col2:
-                with open(out_lamp, "rb") as f:
-                    st.download_button("Download Lampiran 2", f, file_name=out_lamp)
+                        take_drugs = remaining_drugs[:space_left]
+                        remaining_drugs = remaining_drugs[space_left:]
 
-            if os.path.exists("temp_pdf.pdf"):
-                os.remove("temp_pdf.pdf")
+                        current_page_patients.append({
+                            "Nama": patient["Nama"],
+                            "No KP": patient["No KP"],
+                            "Tarikh": patient["Tarikh"],
+                            "Drugs": take_drugs
+                        })
+                        current_page_used_rows += len(take_drugs)
+
+                if current_page_patients:
+                    lampiran_pages.append(current_page_patients)
+
+                for page_idx, page_patients in enumerate(lampiran_pages):
+                    suffix = f"_Page_{page_idx+1}" if len(lampiran_pages) > 1 else ""
+                    out_name = f"Lampiran2_Batch{suffix}.xlsx"
+                    build_lampiran_page(page_patients, LAMP_TEMPLATE, out_name)
+                    generated_files.append(out_name)
+
+                # --- 2. PROCESS KEW PS-7 (Max 17 rows per page) ---
+                all_drugs_flat = []
+                for p in all_patients:
+                    all_drugs_flat.extend(p["Drugs"])
+
+                kew_chunks = [all_drugs_flat[i:i + KEW_CAPACITY] for i in range(0, len(all_drugs_flat), KEW_CAPACITY)]
+                total_counter = 1
+
+                for page_idx, chunk in enumerate(kew_chunks):
+                    suffix = f"_Page_{page_idx+1}" if len(kew_chunks) > 1 else ""
+                    out_name = f"KEW_PS7_Batch{suffix}.xlsx"
+                    build_kew_page(chunk, KEW_TEMPLATE, out_name, start_index=total_counter)
+                    total_counter += len(chunk)
+                    generated_files.append(out_name)
+
+            st.success(f"Successfully processed {len(all_patients)} patient(s) across {len(generated_files)} template page(s)!")
+
+            # --- PREVIEWS ---
+            for p in all_patients:
+                with st.expander(f"👤 Patient: {p['Nama']} (IC: {p['No KP']}) - {len(p['Drugs'])} Drugs", expanded=False):
+                    st.dataframe(p["Drugs"], use_container_width=True)
+
+            st.write("---")
+            st.subheader("📥 Download Generated Sheets")
+
+            # Individual download buttons
+            cols = st.columns(2)
+            for idx, file_name in enumerate(generated_files):
+                with cols[idx % 2]:
+                    with open(file_name, "rb") as f:
+                        st.download_button(
+                            label=f"⬇️ {file_name}",
+                            data=f.read(),
+                            file_name=file_name,
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True
+                        )
+
+            # Zip archive download button
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w") as zf:
+                for file_name in generated_files:
+                    zf.write(file_name, arcname=file_name)
+            zip_buffer.seek(0)
+
+            st.download_button(
+                label="📦 Download All Pages as ZIP",
+                data=zip_buffer,
+                file_name="SPUB_Processed_Batch.zip",
+                mime="application/zip",
+                use_container_width=True)
