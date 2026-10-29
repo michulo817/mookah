@@ -24,16 +24,23 @@ thin_border = Border(
     top=Side(style='thin', color='000000'), bottom=Side(style='thin', color='000000')
 )
 
-# Initialize persistent session state
 if "batch_results" not in st.session_state:
     st.session_state["batch_results"] = None
 
 def extract_data_from_pdf(pdf_stream):
     patient_data = {"Nama": "Unknown", "No KP": "", "Tarikh": "13/10/2026", "Drugs": []}
+    
+    # Ensure stream is read from the beginning
+    if hasattr(pdf_stream, "seek"):
+        pdf_stream.seek(0)
+        
     full_text = ""
     reader = PdfReader(pdf_stream)
     for page in reader.pages:
         full_text += (page.extract_text() or "") + "\n"
+
+    # Normalize line endings to avoid \r\n parsing failures
+    full_text = full_text.replace('\r\n', '\n').replace('\r', '\n')
 
     name_match = re.search(r"Nama:\s*(.*)", full_text)
     kp_match = re.search(r"No\.\s*KP:\s*(\d+)", full_text)
@@ -42,7 +49,8 @@ def extract_data_from_pdf(pdf_stream):
     if kp_match: 
         patient_data["No KP"] = kp_match.group(1).strip()
 
-    blocks = re.split(r'WD_FM\nED\n(?:\d+\.\n)?', full_text)
+    # Robust regex matching spaces, tabs, or varying newlines
+    blocks = re.split(r'WD_FM\s+ED\s+(?:\d+\.\s*)?', full_text)
     for block in blocks[1:]:
         lines = [line.strip() for line in block.split('\n') if line.strip()]
         qty_idx = -1
@@ -50,7 +58,7 @@ def extract_data_from_pdf(pdf_stream):
             if "hari" in line.lower():
                 qty_idx = idx - 1
                 break
-        if qty_idx != -1:
+        if qty_idx != -1 and qty_idx > 0:
             qty = lines[qty_idx]
             last_paren_idx = -1
             for idx in range(qty_idx - 1, -1, -1):
@@ -60,13 +68,15 @@ def extract_data_from_pdf(pdf_stream):
             if last_paren_idx != -1:
                 drug_name = " ".join(lines[:last_paren_idx+1])
                 dosage_raw = " ".join(lines[last_paren_idx+1:qty_idx])
-                dosage = re.sub(r'\s+', ' ', dosage_raw).strip()
-                dosage = re.sub(r'(\d)\s+Q\s+(\d)\s+W', r'\1Q\2W', dosage)
-                dosage = re.sub(r'(\d)\s+Q\s+(\d)\s+D', r'\1Q\2D', dosage)
             else:
                 drug_name = lines[0]
-                dosage = " ".join(lines[1:qty_idx])
+                dosage_raw = " ".join(lines[1:qty_idx])
+                
+            dosage = re.sub(r'\s+', ' ', dosage_raw).strip()
+            dosage = re.sub(r'(\d)\s*Q\s*(\d)\s*W', r'\1Q\2W', dosage, flags=re.I)
+            dosage = re.sub(r'(\d)\s*Q\s*(\d)\s*D', r'\1Q\2D', dosage, flags=re.I)
             patient_data["Drugs"].append({"Name": drug_name, "Dosage": dosage, "Quantity": qty})
+            
     return patient_data
 
 def build_kew_page(drugs_chunk, template_path, output_path, start_index=1):
@@ -130,6 +140,8 @@ def build_lampiran_page(patient_groups_in_page, template_path, output_path):
     for p in patient_groups_in_page:
         drugs = p["Drugs"]
         count = len(drugs)
+        if count == 0:
+            continue
         end_row = current_row + count - 1
 
         sheet[f'A{current_row}'] = patient_number
@@ -177,104 +189,4 @@ uploaded_pdfs = st.file_uploader(
 )
 
 if uploaded_pdfs:
-    st.info(f"Loaded {len(uploaded_pdfs)} PDF file(s).")
-
-    if not os.path.exists(KEW_TEMPLATE) or not os.path.exists(LAMP_TEMPLATE):
-        st.error(f"Cannot find: `{KEW_TEMPLATE}` or `{LAMP_TEMPLATE}` in the repository root.")
-    else:
-        if st.button("Generate Excel Batches", type="primary", use_container_width=True):
-            with st.spinner("Extracting and mapping patient data..."):
-                all_patients = []
-                for pdf_file in uploaded_pdfs:
-                    p_data = extract_data_from_pdf(pdf_file)
-                    all_patients.append(p_data)
-
-                generated_files_dict = {}
-
-                # 1. PROCESS LAMPIRAN 2 (Max 19 rows per page)
-                lampiran_pages = []
-                current_page_patients = []
-                current_page_used_rows = 0
-
-                for patient in all_patients:
-                    remaining_drugs = list(patient["Drugs"])
-                    while remaining_drugs:
-                        space_left = LAMP_CAPACITY - current_page_used_rows
-                        if space_left <= 0:
-                            lampiran_pages.append(current_page_patients)
-                            current_page_patients = []
-                            current_page_used_rows = 0
-                            space_left = LAMP_CAPACITY
-
-                        take_drugs = remaining_drugs[:space_left]
-                        remaining_drugs = remaining_drugs[space_left:]
-
-                        current_page_patients.append({
-                            "Nama": patient["Nama"],
-                            "No KP": patient["No KP"],
-                            "Tarikh": patient["Tarikh"],
-                            "Drugs": take_drugs
-                        })
-                        current_page_used_rows += len(take_drugs)
-
-                if current_page_patients:
-                    lampiran_pages.append(current_page_patients)
-
-                for page_idx, page_patients in enumerate(lampiran_pages):
-                    suffix = f"_Page_{page_idx+1}" if len(lampiran_pages) > 1 else ""
-                    out_name = f"Lampiran2_Batch{suffix}.xlsx"
-                    build_lampiran_page(page_patients, LAMP_TEMPLATE, out_name)
-                    with open(out_name, "rb") as f:
-                        generated_files_dict[out_name] = f.read()
-                    if os.path.exists(out_name):
-                        os.remove(out_name)
-
-                # 2. PROCESS KEW PS-7 (Max 17 rows per page)
-                all_drugs_flat = []
-                for p in all_patients:
-                    all_drugs_flat.extend(p["Drugs"])
-
-                kew_chunks = [all_drugs_flat[i:i + KEW_CAPACITY] for i in range(0, len(all_drugs_flat), KEW_CAPACITY)]
-                total_counter = 1
-
-                for page_idx, chunk in enumerate(kew_chunks):
-                    suffix = f"_Page_{page_idx+1}" if len(kew_chunks) > 1 else ""
-                    out_name = f"KEW_PS7_Batch{suffix}.xlsx"
-                    build_kew_page(chunk, KEW_TEMPLATE, out_name, start_index=total_counter)
-                    total_counter += len(chunk)
-                    with open(out_name, "rb") as f:
-                        generated_files_dict[out_name] = f.read()
-                    if os.path.exists(out_name):
-                        os.remove(out_name)
-
-                # Prepare ZIP Archive in memory
-                zip_buffer = io.BytesIO()
-                with zipfile.ZipFile(zip_buffer, "w") as zf:
-                    for filename, filedata in generated_files_dict.items():
-                        zf.writestr(filename, filedata)
-                zip_data = zip_buffer.getvalue()
-
-                # Save entire state
-                st.session_state["batch_results"] = {
-                    "patients": all_patients,
-                    "files": generated_files_dict,
-                    "zip": zip_data
-                }
-
-# Render from session_state so it persists across button clicks and downloads
-if st.session_state["batch_results"]:
-    results = st.session_state["batch_results"]
-    patients = results["patients"]
-    files = results["files"]
-    zip_bytes = results["zip"]
-
-    st.success(f"Generated {len(files)} page(s) across {len(patients)} patient(s). Results will remain visible until new files are generated.")
-
-    for p in patients:
-        with st.expander(f"👤 Patient: {p['Nama']} (IC: {p['No KP']}) — {len(p['Drugs'])} Drugs", expanded=False):
-            st.dataframe(p["Drugs"], use_container_width=True)
-
-    st.write("---")
-    st.subheader("📥 Download Generated Sheets")
-
-    cols = st.columns(2)
+    st.info(f"Loaded {len(uploaded_pdfs)} PDF file(
