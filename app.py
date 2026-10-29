@@ -277,4 +277,4 @@ if st.session_state["batch_results"]:
     st.write("---")
     st.subheader("📥 Download Generated Sheets")
 
-    cols = st.columns(2
+    cols = st.columns(2)
