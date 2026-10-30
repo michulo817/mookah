@@ -15,18 +15,15 @@ st.set_page_config(page_title="SPUB ENGINE", layout="wide")
 
 st.markdown("""
 <style>
-    /* Hide Streamlit Clutter */
     #MainMenu {visibility: hidden;}
     header {visibility: hidden;}
     footer {visibility: hidden;}
     
-    /* Pure Black Background */
     .stApp {
         background-color: #000000;
         color: #ffffff;
     }
     
-    /* Strict Typography (Removed span to prevent breaking icons) */
     h1, h2, h3, p, label {
         font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif !important;
         text-transform: uppercase;
@@ -48,7 +45,6 @@ st.markdown("""
         margin-bottom: 30px;
     }
 
-    /* Standard Button Reset */
     .stButton > button {
         background-color: #ffffff !important;
         color: #000000 !important;
@@ -75,7 +71,6 @@ st.markdown("""
         color: #000000 !important;
     }
 
-    /* File Uploader Clean-up */
     [data-testid="stFileUploader"] {
         background-color: transparent !important;
     }
@@ -91,7 +86,6 @@ st.markdown("""
         font-weight: 800 !important;
     }
 
-    /* Alerts and Expanders */
     [data-testid="stAlert"] {
         background-color: transparent !important;
         border: 1px solid #444444 !important;
@@ -132,6 +126,17 @@ COLORS = {
     "DEFAULT": "FFFFFFFF" 
 }
 
+# Extensive heuristic whitelist for rural district hospital indenting
+SPECIALIZED_KEYWORDS = [
+    "HYLO", "COMOD", "OPTHALMIC", "EYE DROP", "LATANOPROST", "DORZOLAMIDE", "TIMOLOL", 
+    "INHALER", "RESPIMAT", "TURBUHALER", "ACCUHALER", "ELLIPTA", "EVOHALER", "BREEZHALER",
+    "GLIPTIN", "GLIFLOZIN", "RYZODEG", "TRESIBA", "TOUJEO", "NOVOMIX", "PENFILL", "CARTRIDGE",
+    "LEVETIRACETAM", "TOPIRAMATE", "LAMOTRIGINE", "CLOBAZAM", "PREGABALIN",
+    "SILDENAFIL", "OXYBUTYNIN", "TAMSULOSIN", "DUTASTERIDE",
+    "TAMOXIFEN", "MYCOPHENOLATE", "TACROLIMUS", "CYCLOSPORINE", 
+    "CHOLECALCIFEROL", "CALCITRIOL"
+]
+
 # --- 3. EXTRACTION ENGINES ---
 def extract_general_data(pdf_stream):
     patient_data = {"Nama": "UNKNOWN", "No KP": "", "Tarikh": datetime.now().strftime("%d/%m/%Y"), "Drugs": []}
@@ -147,7 +152,7 @@ def extract_general_data(pdf_stream):
     if name_match: patient_data["Nama"] = name_match.group(1).strip().upper()
     if kp_match: patient_data["No KP"] = kp_match.group(1).strip()
 
-    blocks = re.split(r'WD_FM\s+ED\s+(?:\d+\.\s*)?', full_text)
+    blocks = re.split(r'\n(?:[A-Z_ ]+\n)?\d+\.\n', full_text)
     for block in blocks[1:]:
         lines = [line.strip() for line in block.split('\n') if line.strip()]
         qty_idx = next((i - 1 for i, line in enumerate(lines) if "hari" in line.lower()), -1)
@@ -179,8 +184,8 @@ def extract_indent_data(pdf_stream):
 
     name = re.search(r"Nama:\s*(.*)", full_text)
     kp = re.search(r"No\.\s*KP:\s*(\d+)", full_text)
-    mrn = re.search(r"(HBTU\d+|HSIBU\d+|SGH\d+)", full_text)
-    tca = re.search(r"TCA\s*(\d{1,2}/\d{1,2}/\d{2,4})", full_text, re.IGNORECASE)
+    mrn = re.search(r"(HBTU\d+|HSIBU\d+|SGH\d+|HUS\d+)", full_text)
+    tca = re.search(r"TCA.*?:?\s*(\d{1,2}/\d{1,2}/\d{2,4})", full_text, re.IGNORECASE)
 
     patient_data = {
         "Nama": name.group(1).strip().upper() if name else "UNKNOWN",
@@ -195,14 +200,19 @@ def extract_indent_data(pdf_stream):
     elif patient_data["MRN"].startswith("HSIB"): patient_data["Hospital_Code"] = "HSIBU"
     elif patient_data["MRN"].startswith("SGH") or patient_data["MRN"].startswith("HUS"): patient_data["Hospital_Code"] = "SGH"
 
-    blocks = re.split(r'WD_FM\s+ED\s+(?:\d+\.\s*)?', full_text)
+    blocks = re.split(r'\n(?:[A-Z_ ]+\n)?\d+\.\n', full_text)
     for block in blocks[1:]:
         lines = [line.strip() for line in block.split('\n') if line.strip()]
         qty_idx = next((i - 1 for i, line in enumerate(lines) if "hari" in line.lower()), -1)
         
         if qty_idx > 0:
             drug_name = " ".join(lines[:qty_idx])
-            if re.search(r'\((A/KK|A\*|A)\)', drug_name, re.IGNORECASE):
+            
+            # Master logic: Explicit A-marker OR falls under specialized heuristic whitelist
+            is_group_a = re.search(r'\((A/KK|A\*|A)\)', drug_name, re.IGNORECASE)
+            is_specialized = any(kw in drug_name.upper() for kw in SPECIALIZED_KEYWORDS)
+            
+            if is_group_a or is_specialized:
                 last_paren_idx = next((i for i in range(qty_idx - 1, -1, -1) if ')' in lines[i]), -1)
                 
                 if last_paren_idx != -1:
@@ -404,11 +414,11 @@ if uploaded_pdfs:
             st.error(f"SYSTEM ERROR: MASTER TEMPLATE '{INDENT_TEMPLATE}' MISSING.")
         else:
             if st.button("INTEGRATE TO MASTER DATABASE", type="primary", use_container_width=True):
-                with st.spinner("FILTERING GROUP A DRUGS..."):
+                with st.spinner("FILTERING RESTRICTED DRUGS..."):
                     indent_patients = [extract_indent_data(pdf) for pdf in uploaded_pdfs]
                     
                     if sum(len(p["Drugs"]) for p in indent_patients) == 0:
-                        st.error("NO GROUP A (A/KK, A*, A) DRUGS DETECTED IN ARCHIVES.")
+                        st.error("NO TARGET DRUGS DETECTED IN ARCHIVES.")
                     else:
                         out_path = append_to_indent_list(indent_patients, INDENT_TEMPLATE)
                         with open(out_path, "rb") as f:
@@ -417,7 +427,7 @@ if uploaded_pdfs:
 
         if st.session_state.get("indent_result"):
             st.success("DATABASE INTEGRATION COMPLETE.")
-            st.markdown('<br><div class="ye-subtitle" style="margin-bottom: 10px;">INDENT LOG (GROUP A DRUGS ONLY)</div>', unsafe_allow_html=True)
+            st.markdown('<br><div class="ye-subtitle" style="margin-bottom: 10px;">INDENT LOG (RESTRICTED DRUGS ONLY)</div>', unsafe_allow_html=True)
             for p in st.session_state["indent_result"]["patients"]:
                 if p["Drugs"]:
                     with st.expander(f"{p['Nama']} // {p['MRN']} // {p['Hospital_Code']}", expanded=True):
