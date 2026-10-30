@@ -214,7 +214,6 @@ def extract_indent_data(pdf_stream):
                 next_date = ""
                 
             balance_qty = re.sub(r'[a-zA-Z\s]', '', lines[hari_idx]) 
-            total_qty = lines[hari_idx - 1]
             
             drug_info = " ".join(lines[:hari_idx - 1])
             drug_name_no_price = re.sub(r'\(RM[^)]+\)', '', drug_info).strip()
@@ -255,6 +254,9 @@ def append_to_indent_list(patients, template_path):
     
     green_fill = PatternFill(start_color="FF00FF00", end_color="FF00FF00", fill_type="solid")
     clear_fill = PatternFill(fill_type=None)
+    
+    thin = Side(style='thin', color='000000')
+    none_side = Side(style=None)
 
     for p in patients:
         num_drugs = len(p["Drugs"])
@@ -284,63 +286,64 @@ def append_to_indent_list(patients, template_path):
         combined_details = f"{p['Nama']} ({p['No KP']})\n{p['MRN']} TCA: {p['TCA']}"
         start_merge_row = insert_idx
 
+        # First pass: Write Data and Basic Formats
         for idx, drug in enumerate(p["Drugs"]):
             r = insert_idx + idx
             
-            # Wipe formatting to pure white/no-fill
+            # Wipe completely to pure grid
             for col_idx in range(1, 15):
                 cell = sheet.cell(row=r, column=col_idx)
                 cell.fill = clear_fill
                 cell.border = thin_border
                 cell.font = font_style
             
-            # Only write Patient Details into the FIRST row of the block
-            if idx == 0:
-                sheet[f'B{r}'].value = False 
-                sheet[f'B{r}'].alignment = align_center
-
-                cell_c = sheet[f'C{r}']
-                cell_c.value = sanitize_excel_text(combined_details)
-                cell_c.alignment = align_left
-
-                sheet[f'E{r}'].fill = hosp_fill
+            sheet[f'B{r}'].value = False 
             
-            # Clean Drug Name + Dosage Combined (Col F)
+            if idx == 0:
+                sheet[f'C{r}'].value = sanitize_excel_text(combined_details)
+            
+            sheet[f'E{r}'].fill = hosp_fill
+            
             cell_f = sheet[f'F{r}']
             drug_str = f"{drug['Name']} [{drug['Dosage']}]"
             cell_f.value = sanitize_excel_text(drug_str)
             cell_f.alignment = align_left
 
-            # Balance Quantity with '/7' format (Col G)
             cell_g = sheet[f'G{r}']
             bal_qty = sanitize_excel_text(str(drug["Balance_Qty"]))
-            if bal_qty.isdigit():
-                cell_g.value = f"{bal_qty}/7"
-            else:
-                cell_g.value = bal_qty
+            cell_g.value = f"{bal_qty}/7" if bal_qty.isdigit() else bal_qty
             cell_g.alignment = align_left
 
-            # Next Date - Green Block (Col H)
             sheet[f'H{r}'].value = sanitize_excel_text(drug["Next_Date"])
             sheet[f'H{r}'].alignment = align_center
             sheet[f'H{r}'].fill = green_fill
             
-            # Future Date Blocks (Col K, N)
             sheet[f'K{r}'].fill = green_fill
             sheet[f'N{r}'].fill = green_fill
 
-        # Vertical Merging for multiple drugs
+        # Second pass: Strip internal horizontal borders for flawless merging
+        end_merge_row = start_merge_row + num_drugs - 1
+        
+        for r in range(start_merge_row, end_merge_row + 1):
+            t = thin if r == start_merge_row else none_side
+            b = thin if r == end_merge_row else none_side
+            
+            sheet.cell(row=r, column=2).border = Border(left=thin, right=thin, top=t, bottom=b) # B
+            sheet.cell(row=r, column=3).border = Border(left=thin, right=none_side, top=t, bottom=b) # C (Left half of block)
+            sheet.cell(row=r, column=4).border = Border(left=none_side, right=thin, top=t, bottom=b) # D (Right half of block)
+            sheet.cell(row=r, column=5).border = Border(left=thin, right=thin, top=t, bottom=b) # E
+
+        # Third pass: Merge the blocks
         if num_drugs > 1:
-            end_merge_row = start_merge_row + num_drugs - 1
-            for col_letter in ['A', 'B', 'C', 'D', 'E']:
-                sheet.merge_cells(f"{col_letter}{start_merge_row}:{col_letter}{end_merge_row}")
-                # Ensure the merged block retains its color and alignment
-                if col_letter == 'E':
-                    sheet[f"E{start_merge_row}"].fill = hosp_fill
-                elif col_letter == 'C':
-                    sheet[f"C{start_merge_row}"].alignment = Alignment(vertical='center', horizontal='left', wrap_text=True)
-                elif col_letter == 'B':
-                    sheet[f"B{start_merge_row}"].alignment = Alignment(vertical='center', horizontal='center', wrap_text=True)
+            sheet.merge_cells(start_row=start_merge_row, start_column=2, end_row=end_merge_row, end_column=2) # B
+            sheet.merge_cells(start_row=start_merge_row, start_column=3, end_row=end_merge_row, end_column=4) # C:D horizontally & vertically
+            sheet.merge_cells(start_row=start_merge_row, start_column=5, end_row=end_merge_row, end_column=5) # E
+        else:
+            sheet.merge_cells(start_row=start_merge_row, start_column=3, end_row=start_merge_row, end_column=4) # C:D horizontally
+
+        sheet.cell(row=start_merge_row, column=2).alignment = align_center
+        sheet.cell(row=start_merge_row, column=3).alignment = align_left
+        sheet.cell(row=start_merge_row, column=5).fill = hosp_fill
 
     wb.save(output_path)
     return output_path
