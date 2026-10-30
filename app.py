@@ -8,23 +8,26 @@ import shutil
 import os
 import io
 import zipfile
-from datetime import datetime, timedelta
+from datetime import datetime
 
-# --- 1. BRUTALIST CSS AESTHETIC ---
+# --- 1. REFINED BRUTALIST CSS AESTHETIC ---
 st.set_page_config(page_title="SPUB ENGINE", layout="wide")
 
 st.markdown("""
 <style>
+    /* Hide Streamlit Clutter */
     #MainMenu {visibility: hidden;}
     header {visibility: hidden;}
     footer {visibility: hidden;}
     
+    /* Pure Black Background */
     .stApp {
         background-color: #000000;
         color: #ffffff;
     }
     
-    h1, h2, h3, p, label, span {
+    /* Strict Typography (Removed span to prevent breaking icons) */
+    h1, h2, h3, p, label {
         font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif !important;
         text-transform: uppercase;
         letter-spacing: 1px;
@@ -45,6 +48,7 @@ st.markdown("""
         margin-bottom: 30px;
     }
 
+    /* Standard Button Reset */
     .stButton > button {
         background-color: #ffffff !important;
         color: #000000 !important;
@@ -53,10 +57,10 @@ st.markdown("""
         font-weight: 800 !important;
         letter-spacing: 2px !important;
         padding: 15px !important;
-        transition: all 0.2s ease-in-out;
+        transition: opacity 0.2s ease;
     }
     .stButton > button:hover {
-        background-color: #cccccc !important;
+        opacity: 0.8;
     }
     
     .stDownloadButton > button {
@@ -71,13 +75,23 @@ st.markdown("""
         color: #000000 !important;
     }
 
+    /* File Uploader Clean-up */
     [data-testid="stFileUploader"] {
         background-color: transparent !important;
-        border: 1px dashed #444444;
-        border-radius: 0px;
-        padding: 20px;
+    }
+    [data-testid="stFileUploadDropzone"] {
+        background-color: #080808 !important;
+        border: 1px solid #333333 !important;
+        border-radius: 0px !important;
+    }
+    [data-testid="stFileUploadDropzone"] button {
+        background-color: #ffffff !important;
+        color: #000000 !important;
+        border-radius: 0px !important;
+        font-weight: 800 !important;
     }
 
+    /* Alerts and Expanders */
     [data-testid="stAlert"] {
         background-color: transparent !important;
         border: 1px solid #444444 !important;
@@ -95,15 +109,6 @@ st.markdown("""
         font-weight: 600 !important;
         color: #ffffff !important;
     }
-
-    /* Minimal Radio Buttons for Navigation */
-    div[role="radiogroup"] > label {
-        background-color: #111111 !important;
-        padding: 15px 20px !important;
-        border: 1px solid #333333 !important;
-        border-radius: 0px !important;
-        margin-right: 10px;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -120,17 +125,15 @@ thin_border = Border(
     top=Side(style='thin', color='000000'), bottom=Side(style='thin', color='000000')
 )
 
-# Hospital Color Codes (Hex)
 COLORS = {
-    "HBTU": "00000000", # Bintulu (Transparent/White base as per your sheet)
-    "HSIBU": "FF99CC00", # Example Sibu Color
-    "SGH": "FFFF9900",   # Example SGH Color
+    "HBTU": "00000000",
+    "HSIBU": "FF99CC00",
+    "SGH": "FFFF9900", 
     "DEFAULT": "FFFFFFFF" 
 }
 
 # --- 3. EXTRACTION ENGINES ---
 def extract_general_data(pdf_stream):
-    """Extracts all drugs for KEW PS7 and Lampiran 2"""
     patient_data = {"Nama": "UNKNOWN", "No KP": "", "Tarikh": datetime.now().strftime("%d/%m/%Y"), "Drugs": []}
     if hasattr(pdf_stream, "seek"): pdf_stream.seek(0)
         
@@ -168,14 +171,12 @@ def extract_general_data(pdf_stream):
     return patient_data
 
 def extract_indent_data(pdf_stream):
-    """Extracts ONLY restricted A/KK, A*, A drugs and extra MRN/TCA info[cite: 10]"""
     if hasattr(pdf_stream, "seek"): pdf_stream.seek(0)
     full_text = ""
     reader = PdfReader(pdf_stream)
     for page in reader.pages: full_text += (page.extract_text() or "") + "\n"
     full_text = full_text.replace('\r\n', '\n').replace('\r', '\n')
 
-    # Basic Info
     name = re.search(r"Nama:\s*(.*)", full_text)
     kp = re.search(r"No\.\s*KP:\s*(\d+)", full_text)
     mrn = re.search(r"(HBTU\d+|HSIBU\d+|SGH\d+)", full_text)
@@ -190,12 +191,10 @@ def extract_indent_data(pdf_stream):
         "Drugs": []
     }
 
-    # Determine Hospital Code for coloring
     if patient_data["MRN"].startswith("HBTU"): patient_data["Hospital_Code"] = "HBTU"
     elif patient_data["MRN"].startswith("HSIB"): patient_data["Hospital_Code"] = "HSIBU"
     elif patient_data["MRN"].startswith("SGH") or patient_data["MRN"].startswith("HUS"): patient_data["Hospital_Code"] = "SGH"
 
-    # Extract only Group A/A*/A/KK drugs[cite: 10]
     blocks = re.split(r'WD_FM\s+ED\s+(?:\d+\.\s*)?', full_text)
     for block in blocks[1:]:
         lines = [line.strip() for line in block.split('\n') if line.strip()]
@@ -203,7 +202,6 @@ def extract_indent_data(pdf_stream):
         
         if qty_idx > 0:
             drug_name = " ".join(lines[:qty_idx])
-            # Strict filter: Must contain Category A markings
             if re.search(r'\((A/KK|A\*|A)\)', drug_name, re.IGNORECASE):
                 last_paren_idx = next((i for i in range(qty_idx - 1, -1, -1) if ')' in lines[i]), -1)
                 
@@ -233,36 +231,27 @@ def append_to_indent_list(patients, template_path):
     align_left = Alignment(vertical='center', horizontal='left', wrap_text=True)
     align_center = Alignment(vertical='center', horizontal='center', wrap_text=True)
 
-    # Find the last empty row
     start_row = sheet.max_row + 1
 
     for p in patients:
-        if not p["Drugs"]: continue # Skip if no Group A drugs found
-
+        if not p["Drugs"]: continue 
         fill_color = PatternFill(start_color=COLORS.get(p["Hospital_Code"], COLORS["DEFAULT"]), end_color=COLORS.get(p["Hospital_Code"], COLORS["DEFAULT"]), fill_type="solid")
-        
-        # Format: NAME (IC) MRN TCA: DATE
         combined_details = f"{p['Nama']} ({p['No KP']}) {p['MRN']} TCA: {p['TCA']}"
 
         for idx, drug in enumerate(p["Drugs"]):
             r = start_row
-            
-            # Column C: Patient Details (Merge if multiple drugs, or just write on first row)
             cell_c = sheet[f'C{r}']
             cell_c.value = combined_details if idx == 0 else ""
             cell_c.font, cell_c.alignment, cell_c.fill = font_style, align_left, fill_color
 
-            # Column F: Medication
             cell_f = sheet[f'F{r}']
             cell_f.value = drug["Name"]
             cell_f.font, cell_f.alignment, cell_f.fill = font_style, align_left, fill_color
 
-            # Column G: Regimen
             cell_g = sheet[f'G{r}']
             cell_g.value = drug["Dosage"]
             cell_g.font, cell_g.alignment, cell_g.fill = font_style, align_center, fill_color
 
-            # Column I: Required Quantity
             cell_i = sheet[f'I{r}']
             cell_i.value = int(drug["Quantity"]) if drug["Quantity"].isdigit() else drug["Quantity"]
             cell_i.font, cell_i.alignment, cell_i.fill = font_style, align_center, fill_color
@@ -272,7 +261,6 @@ def append_to_indent_list(patients, template_path):
     wb.save(output_path)
     return output_path
 
-# (Keep build_kew_page and build_lampiran_page functions identical to previous code here)
 def build_kew_page(drugs_chunk, template_path, output_path, start_index=1):
     shutil.copy(template_path, output_path)
     wb = openpyxl.load_workbook(output_path)
