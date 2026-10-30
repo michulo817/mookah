@@ -286,17 +286,22 @@ def append_to_indent_list(patients, template_path):
         combined_details = f"{p['Nama']} ({p['No KP']})\n{p['MRN']} TCA: {p['TCA']}"
         start_merge_row = insert_idx
 
-        # First pass: Write Data and Basic Formats
+        # First pass: Write Data and format Non-Merged cells only
         for idx, drug in enumerate(p["Drugs"]):
             r = insert_idx + idx
             
-            # Wipe completely to pure grid
+            # Reset cell backgrounds to prevent color bleed
             for col_idx in range(1, 15):
                 cell = sheet.cell(row=r, column=col_idx)
                 cell.fill = clear_fill
-                cell.border = thin_border
                 cell.font = font_style
+                
+                # ONLY apply the full border grid to the non-merged columns.
+                # Columns B, C, D, E are skipped here so they have zero internal borders to begin with.
+                if col_idx not in [2, 3, 4, 5]:
+                    cell.border = thin_border
             
+            # Checkbox 
             sheet[f'B{r}'].value = False 
             
             if idx == 0:
@@ -311,7 +316,10 @@ def append_to_indent_list(patients, template_path):
 
             cell_g = sheet[f'G{r}']
             bal_qty = sanitize_excel_text(str(drug["Balance_Qty"]))
-            cell_g.value = f"{bal_qty}/7" if bal_qty.isdigit() else bal_qty
+            if bal_qty.isdigit():
+                cell_g.value = f"{bal_qty}/7"
+            else:
+                cell_g.value = bal_qty
             cell_g.alignment = align_left
 
             sheet[f'H{r}'].value = sanitize_excel_text(drug["Next_Date"])
@@ -321,7 +329,7 @@ def append_to_indent_list(patients, template_path):
             sheet[f'K{r}'].fill = green_fill
             sheet[f'N{r}'].fill = green_fill
 
-        # Second pass: Strip internal horizontal borders for flawless merging
+        # Second pass: Explicitly draw ONLY the outer perimeter for the merged columns (B, C, D, E)
         end_merge_row = start_merge_row + num_drugs - 1
         
         for r in range(start_merge_row, end_merge_row + 1):
@@ -329,11 +337,11 @@ def append_to_indent_list(patients, template_path):
             b = thin if r == end_merge_row else none_side
             
             sheet.cell(row=r, column=2).border = Border(left=thin, right=thin, top=t, bottom=b) # B
-            sheet.cell(row=r, column=3).border = Border(left=thin, right=none_side, top=t, bottom=b) # C (Left half of block)
-            sheet.cell(row=r, column=4).border = Border(left=none_side, right=thin, top=t, bottom=b) # D (Right half of block)
+            sheet.cell(row=r, column=3).border = Border(left=thin, right=none_side, top=t, bottom=b) # C (Left half of name block)
+            sheet.cell(row=r, column=4).border = Border(left=none_side, right=thin, top=t, bottom=b) # D (Right half of name block)
             sheet.cell(row=r, column=5).border = Border(left=thin, right=thin, top=t, bottom=b) # E
 
-        # Third pass: Merge the blocks
+        # Third pass: Execute the Merges
         if num_drugs > 1:
             sheet.merge_cells(start_row=start_merge_row, start_column=2, end_row=end_merge_row, end_column=2) # B
             sheet.merge_cells(start_row=start_merge_row, start_column=3, end_row=end_merge_row, end_column=4) # C:D horizontally & vertically
