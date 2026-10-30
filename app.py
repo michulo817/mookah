@@ -183,7 +183,6 @@ def extract_indent_data(pdf_stream):
     full_text = ""
     reader = PdfReader(pdf_stream)
     for page in reader.pages: full_text += (page.extract_text() or "") + "\n"
-    # Scrub text for clean extraction
     full_text = full_text.replace('\r\n', '\n').replace('\r', '\n').replace('ƀ', '').replace('\x03', '')
 
     name = re.search(r"Nama:\s*(.*)", full_text)
@@ -217,11 +216,9 @@ def extract_indent_data(pdf_stream):
             balance_qty = re.sub(r'[a-zA-Z\s]', '', lines[hari_idx]) 
             total_qty = lines[hari_idx - 1]
             
-            # Combine raw drug info and explicitly remove pricing
             drug_info = " ".join(lines[:hari_idx - 1])
             drug_name_no_price = re.sub(r'\(RM[^)]+\)', '', drug_info).strip()
             
-            # Smart dosage splitting
             match = re.search(r'(\d+\s*(?:DROP|TAB|CAP|MG|ML|PUFF|UNIT).*)$', drug_name_no_price, re.IGNORECASE)
             if match:
                 dosage = match.group(1).strip()
@@ -257,16 +254,14 @@ def append_to_indent_list(patients, template_path):
     align_center = Alignment(vertical='center', horizontal='center', wrap_text=True)
     
     green_fill = PatternFill(start_color="FF00FF00", end_color="FF00FF00", fill_type="solid")
-    transparent_fill = PatternFill(start_color="00000000", end_color="00000000", fill_type="solid")
+    clear_fill = PatternFill(fill_type=None)
 
     for p in patients:
         if not p["Drugs"]: continue 
         
-        # 1. Determine Exact Hospital Color
         hosp_color_hex = COLORS.get(p["Hospital_Code"], COLORS["DEFAULT"])
         hosp_fill = PatternFill(start_color=hosp_color_hex, end_color=hosp_color_hex, fill_type="solid")
         
-        # 2. Find exact insertion row right underneath the hospital's block
         insert_idx = sheet.max_row + 1
         last_populated = 4
         found_hospital = False
@@ -283,7 +278,6 @@ def append_to_indent_list(patients, template_path):
         if found_hospital:
             insert_idx = last_populated + 1
             
-        # 3. Inject precisely required rows
         sheet.insert_rows(insert_idx, amount=len(p["Drugs"]))
         
         combined_details = f"{p['Nama']} ({p['No KP']})\n{p['MRN']} TCA: {p['TCA']}"
@@ -291,49 +285,40 @@ def append_to_indent_list(patients, template_path):
         for idx, drug in enumerate(p["Drugs"]):
             r = insert_idx + idx
             
-            # Wipe formatting to prevent color bleed from adjacent blocks
+            # Wipe formatting to pure white/no-fill to prevent black cells
             for col_idx in range(1, 15):
-                sheet.cell(row=r, column=col_idx).fill = transparent_fill
+                sheet.cell(row=r, column=col_idx).fill = clear_fill
             
-            # Checkbox Box (B)
             cell_b = sheet[f'B{r}']
             cell_b.value = False 
             cell_b.alignment = align_center
 
-            # Patient Details (C)
             cell_c = sheet[f'C{r}']
             cell_c.value = sanitize_excel_text(combined_details) if idx == 0 else ""
             cell_c.font, cell_c.alignment = font_style, align_left
 
-            # Hospital Color Block (E)
             sheet[f'E{r}'].fill = hosp_fill
 
-            # Clean Drug Name (F)
             cell_f = sheet[f'F{r}']
             cell_f.value = sanitize_excel_text(drug["Name"])
             cell_f.font, cell_f.alignment = font_style, align_left
 
-            # Exact Dosage (G)
             cell_g = sheet[f'G{r}']
             cell_g.value = sanitize_excel_text(drug["Dosage"])
             cell_g.font, cell_g.alignment = font_style, align_left
 
-            # Next Date - Green Block (H)
             sheet[f'H{r}'].value = sanitize_excel_text(drug["Next_Date"])
             sheet[f'H{r}'].font, sheet[f'H{r}'].alignment = font_style, align_center
             sheet[f'H{r}'].fill = green_fill
 
-            # Balance Quantity (I)
             cell_i = sheet[f'I{r}']
             bal_qty = sanitize_excel_text(str(drug["Balance_Qty"]))
             cell_i.value = int(bal_qty) if bal_qty.isdigit() else bal_qty
             cell_i.font, cell_i.alignment = font_style, align_center
             
-            # Future Date Blocks (K, N)
             sheet[f'K{r}'].fill = green_fill
             sheet[f'N{r}'].fill = green_fill
 
-            # Master Border Enforcement
             for col_idx in range(2, 15):
                 sheet.cell(row=r, column=col_idx).border = thin_border
                 
