@@ -254,9 +254,11 @@ def append_to_indent_list(patients, template_path):
     align_center = Alignment(vertical='center', horizontal='center', wrap_text=True)
     
     green_fill = PatternFill(start_color="FF00FF00", end_color="FF00FF00", fill_type="solid")
+    clear_fill = PatternFill(fill_type=None)
 
     for p in patients:
-        if not p["Drugs"]: continue 
+        num_drugs = len(p["Drugs"])
+        if num_drugs == 0: continue 
         
         hosp_color_hex = COLORS.get(p["Hospital_Code"], COLORS["DEFAULT"])
         hosp_fill = PatternFill(start_color=hosp_color_hex, end_color=hosp_color_hex, fill_type="solid")
@@ -277,51 +279,69 @@ def append_to_indent_list(patients, template_path):
         if found_hospital:
             insert_idx = last_populated + 1
             
-        sheet.insert_rows(insert_idx, amount=len(p["Drugs"]))
+        sheet.insert_rows(insert_idx, amount=num_drugs)
         
         combined_details = f"{p['Nama']} ({p['No KP']})\n{p['MRN']} TCA: {p['TCA']}"
+        start_merge_row = insert_idx
 
         for idx, drug in enumerate(p["Drugs"]):
             r = insert_idx + idx
             
-            # 1. Force wipe all formats to prevent Excel color bleed from row above
-            for col_idx in range(2, 15):
+            # Wipe formatting to pure white/no-fill
+            for col_idx in range(1, 15):
                 cell = sheet.cell(row=r, column=col_idx)
-                cell.fill = PatternFill(fill_type=None)
+                cell.fill = clear_fill
                 cell.border = thin_border
-                cell.alignment = align_center
                 cell.font = font_style
             
-            # Checkbox Box (B)
-            sheet[f'B{r}'].value = False 
+            # Only write Patient Details into the FIRST row of the block
+            if idx == 0:
+                sheet[f'B{r}'].value = False 
+                sheet[f'B{r}'].alignment = align_center
 
-            # Patient Details (C)
-            cell_c = sheet[f'C{r}']
-            cell_c.value = sanitize_excel_text(combined_details) if idx == 0 else ""
-            cell_c.alignment = align_left
+                cell_c = sheet[f'C{r}']
+                cell_c.value = sanitize_excel_text(combined_details)
+                cell_c.alignment = align_left
 
-            # Hospital Color Block (E)
-            sheet[f'E{r}'].fill = hosp_fill
-
-            # Clean Drug Name + Dosage Combined (F)
+                sheet[f'E{r}'].fill = hosp_fill
+            
+            # Clean Drug Name + Dosage Combined (Col F)
             cell_f = sheet[f'F{r}']
             drug_str = f"{drug['Name']} [{drug['Dosage']}]"
             cell_f.value = sanitize_excel_text(drug_str)
             cell_f.alignment = align_left
 
-            # Next Date - Green Block (H)
-            sheet[f'H{r}'].value = sanitize_excel_text(drug["Next_Date"])
-            sheet[f'H{r}'].fill = green_fill
-
-            # Balance Quantity (I)
-            cell_i = sheet[f'I{r}']
+            # Balance Quantity with '/7' format (Col G)
+            cell_g = sheet[f'G{r}']
             bal_qty = sanitize_excel_text(str(drug["Balance_Qty"]))
-            cell_i.value = int(bal_qty) if bal_qty.isdigit() else bal_qty
+            if bal_qty.isdigit():
+                cell_g.value = f"{bal_qty}/7"
+            else:
+                cell_g.value = bal_qty
+            cell_g.alignment = align_left
+
+            # Next Date - Green Block (Col H)
+            sheet[f'H{r}'].value = sanitize_excel_text(drug["Next_Date"])
+            sheet[f'H{r}'].alignment = align_center
+            sheet[f'H{r}'].fill = green_fill
             
-            # Future Date Blocks (K, N)
+            # Future Date Blocks (Col K, N)
             sheet[f'K{r}'].fill = green_fill
             sheet[f'N{r}'].fill = green_fill
-                
+
+        # Vertical Merging for multiple drugs
+        if num_drugs > 1:
+            end_merge_row = start_merge_row + num_drugs - 1
+            for col_letter in ['A', 'B', 'C', 'D', 'E']:
+                sheet.merge_cells(f"{col_letter}{start_merge_row}:{col_letter}{end_merge_row}")
+                # Ensure the merged block retains its color and alignment
+                if col_letter == 'E':
+                    sheet[f"E{start_merge_row}"].fill = hosp_fill
+                elif col_letter == 'C':
+                    sheet[f"C{start_merge_row}"].alignment = Alignment(vertical='center', horizontal='left', wrap_text=True)
+                elif col_letter == 'B':
+                    sheet[f"B{start_merge_row}"].alignment = Alignment(vertical='center', horizontal='center', wrap_text=True)
+
     wb.save(output_path)
     return output_path
 
