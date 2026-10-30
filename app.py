@@ -248,7 +248,7 @@ def append_to_indent_list(patients, template_path):
     wb = openpyxl.load_workbook(output_path)
     sheet = wb.active
 
-    font_style = Font(name='Arial', size=10)
+    font_style = Font(name='Calibri', size=12)
     align_left = Alignment(vertical='center', horizontal='left', wrap_text=True)
     align_center = Alignment(vertical='center', horizontal='center', wrap_text=True)
     
@@ -281,27 +281,31 @@ def append_to_indent_list(patients, template_path):
         sheet.insert_rows(insert_idx, amount=num_drugs)
         combined_details = f"{p['Nama']} ({p['No KP']})\n{p['MRN']} TCA: {p['TCA']}"
         start_merge_row = insert_idx
+        end_merge_row = start_merge_row + num_drugs - 1
 
-        # Pass 1: Write Data & Force Wipe Inherited Gridlines
+        # Pass 1: Write Data & Apply Grids to Independent Columns
         for idx, drug in enumerate(p["Drugs"]):
             r = insert_idx + idx
             
+            # Wipe format completely for the row
             for col_idx in range(1, 15):
                 cell = sheet.cell(row=r, column=col_idx)
                 cell.fill = clear_fill
                 cell.font = font_style
                 
-                # Apply borders ONLY to unmerged rows. Ensure merged block columns (B,C,D,E) are wiped clean.
-                if col_idx not in [2, 3, 4, 5]:
+                # Apply standard full grid borders EXCEPT to Columns C & D (which will merge)
+                if col_idx not in [3, 4]:
                     cell.border = thin_border
                 else:
                     cell.border = empty_border
             
-            # Checkbox
             sheet[f'B{r}'].value = False 
-            
+            sheet[f'B{r}'].alignment = align_center
+
             if idx == 0:
                 sheet[f'C{r}'].value = sanitize_excel_text(combined_details)
+            
+            sheet[f'E{r}'].fill = hosp_fill
             
             cell_f = sheet[f'F{r}']
             drug_str = f"{drug['Name']} [{drug['Dosage']}]"
@@ -323,25 +327,19 @@ def append_to_indent_list(patients, template_path):
             sheet[f'K{r}'].fill = green_fill
             sheet[f'N{r}'].fill = green_fill
 
-        # Pass 2: Merge first to lock the blocks
-        end_merge_row = start_merge_row + num_drugs - 1
-        
-        if num_drugs > 1:
-            sheet.merge_cells(start_row=start_merge_row, start_column=2, end_row=end_merge_row, end_column=2) # B
-            sheet.merge_cells(start_row=start_merge_row, start_column=3, end_row=end_merge_row, end_column=4) # C:D Name Cell
-            sheet.merge_cells(start_row=start_merge_row, start_column=5, end_row=end_merge_row, end_column=5) # E
-        else:
-            sheet.merge_cells(start_row=start_merge_row, start_column=3, end_row=start_merge_row, end_column=4) # C:D Name Cell
+        # Pass 2: Draw strict perimeter around the Name Block (C:D) to avoid ghost lines
+        for r in range(start_merge_row, end_merge_row + 1):
+            t = thin if r == start_merge_row else none_side
+            b = thin if r == end_merge_row else none_side
+            
+            # Cell C (Left half of name block)
+            sheet.cell(row=r, column=3).border = Border(left=thin, right=none_side, top=t, bottom=b) 
+            # Cell D (Right half of name block)
+            sheet.cell(row=r, column=4).border = Border(left=none_side, right=thin, top=t, bottom=b) 
 
-        # Pass 3: Apply explicit full borders to the TOP-LEFT cell only. Excel handles the rest.
-        sheet.cell(row=start_merge_row, column=2).border = thin_border
-        sheet.cell(row=start_merge_row, column=3).border = thin_border
-        sheet.cell(row=start_merge_row, column=5).border = thin_border
-
-        # Assign locked formatting and colors
-        sheet.cell(row=start_merge_row, column=2).alignment = align_center
+        # Pass 3: Execute Name Block Merge
+        sheet.merge_cells(start_row=start_merge_row, start_column=3, end_row=end_merge_row, end_column=4)
         sheet.cell(row=start_merge_row, column=3).alignment = align_left
-        sheet.cell(row=start_merge_row, column=5).fill = hosp_fill
 
     wb.save(output_path)
     return output_path
