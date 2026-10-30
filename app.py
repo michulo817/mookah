@@ -173,4 +173,4 @@ def extract_general_data(pdf_stream):
                 
             dosage = re.sub(r'\s+', ' ', dosage_raw).strip()
             dosage = re.sub(r'(\d)\s*Q\s*(\d)\s*W', r'\1Q\2W', dosage, flags=re.I)
-            dosage = re.sub(r'(\d)\s*Q\s*(\d)\s*D',
+            dosage = re.sub(r'(\d)\s*Q\s*(\d)\s*D',)
