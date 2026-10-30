@@ -114,10 +114,10 @@ INDENT_TEMPLATE = "Copy of SPUB drug indent list google doc.xlsx"
 LAMP_CAPACITY = 19
 KEW_CAPACITY = 17
 
-thin_border = Border(
-    left=Side(style='thin', color='000000'), right=Side(style='thin', color='000000'),
-    top=Side(style='thin', color='000000'), bottom=Side(style='thin', color='000000')
-)
+thin = Side(style='thin', color='000000')
+none_side = Side(style=None)
+thin_border = Border(left=thin, right=thin, top=thin, bottom=thin)
+empty_border = Border(left=none_side, right=none_side, top=none_side, bottom=none_side)
 
 COLORS = {
     "HBTU": "FFFF00FF",   # Magenta / Purple for Bintulu
@@ -254,10 +254,6 @@ def append_to_indent_list(patients, template_path):
     
     green_fill = PatternFill(start_color="FF00FF00", end_color="FF00FF00", fill_type="solid")
     clear_fill = PatternFill(fill_type=None)
-    
-    thin = Side(style='thin', color='000000')
-    none_side = Side(style=None)
-    empty_border = Border(left=none_side, right=none_side, top=none_side, bottom=none_side)
 
     for p in patients:
         num_drugs = len(p["Drugs"])
@@ -283,11 +279,10 @@ def append_to_indent_list(patients, template_path):
             insert_idx = last_populated + 1
             
         sheet.insert_rows(insert_idx, amount=num_drugs)
-        
         combined_details = f"{p['Nama']} ({p['No KP']})\n{p['MRN']} TCA: {p['TCA']}"
         start_merge_row = insert_idx
 
-        # First pass: Write Data and force-wipe ALL ghost borders from Excel's insert command
+        # Pass 1: Write Data & Force Wipe Inherited Gridlines
         for idx, drug in enumerate(p["Drugs"]):
             r = insert_idx + idx
             
@@ -296,20 +291,17 @@ def append_to_indent_list(patients, template_path):
                 cell.fill = clear_fill
                 cell.font = font_style
                 
-                # ONLY apply the full border grid to the non-merged columns.
-                # Columns B, C, D, E are wiped entirely to prevent the ghost line bug.
+                # Apply borders ONLY to unmerged rows. Ensure merged block columns (B,C,D,E) are wiped clean.
                 if col_idx not in [2, 3, 4, 5]:
                     cell.border = thin_border
                 else:
                     cell.border = empty_border
             
-            # Checkbox 
+            # Checkbox
             sheet[f'B{r}'].value = False 
             
             if idx == 0:
                 sheet[f'C{r}'].value = sanitize_excel_text(combined_details)
-            
-            sheet[f'E{r}'].fill = hosp_fill
             
             cell_f = sheet[f'F{r}']
             drug_str = f"{drug['Name']} [{drug['Dosage']}]"
@@ -331,26 +323,22 @@ def append_to_indent_list(patients, template_path):
             sheet[f'K{r}'].fill = green_fill
             sheet[f'N{r}'].fill = green_fill
 
-        # Second pass: Explicitly draw ONLY the outer perimeter for the merged blocks (B, C, D, E)
+        # Pass 2: Merge first to lock the blocks
         end_merge_row = start_merge_row + num_drugs - 1
         
-        for r in range(start_merge_row, end_merge_row + 1):
-            t = thin if r == start_merge_row else none_side
-            b = thin if r == end_merge_row else none_side
-            
-            sheet.cell(row=r, column=2).border = Border(left=thin, right=thin, top=t, bottom=b) # B
-            sheet.cell(row=r, column=3).border = Border(left=thin, right=none_side, top=t, bottom=b) # C (Left half of name block)
-            sheet.cell(row=r, column=4).border = Border(left=none_side, right=thin, top=t, bottom=b) # D (Right half of name block)
-            sheet.cell(row=r, column=5).border = Border(left=thin, right=thin, top=t, bottom=b) # E
-
-        # Third pass: Execute the Merges flawlessly
         if num_drugs > 1:
             sheet.merge_cells(start_row=start_merge_row, start_column=2, end_row=end_merge_row, end_column=2) # B
-            sheet.merge_cells(start_row=start_merge_row, start_column=3, end_row=end_merge_row, end_column=4) # C:D horizontally & vertically
+            sheet.merge_cells(start_row=start_merge_row, start_column=3, end_row=end_merge_row, end_column=4) # C:D Name Cell
             sheet.merge_cells(start_row=start_merge_row, start_column=5, end_row=end_merge_row, end_column=5) # E
         else:
-            sheet.merge_cells(start_row=start_merge_row, start_column=3, end_row=start_merge_row, end_column=4) # C:D horizontally
+            sheet.merge_cells(start_row=start_merge_row, start_column=3, end_row=start_merge_row, end_column=4) # C:D Name Cell
 
+        # Pass 3: Apply explicit full borders to the TOP-LEFT cell only. Excel handles the rest.
+        sheet.cell(row=start_merge_row, column=2).border = thin_border
+        sheet.cell(row=start_merge_row, column=3).border = thin_border
+        sheet.cell(row=start_merge_row, column=5).border = thin_border
+
+        # Assign locked formatting and colors
         sheet.cell(row=start_merge_row, column=2).alignment = align_center
         sheet.cell(row=start_merge_row, column=3).alignment = align_left
         sheet.cell(row=start_merge_row, column=5).fill = hosp_fill
