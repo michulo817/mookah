@@ -126,7 +126,6 @@ COLORS = {
     "DEFAULT": "FFFFFFFF" 
 }
 
-# Extensive heuristic whitelist for rural district hospital indenting
 SPECIALIZED_KEYWORDS = [
     "HYLO", "COMOD", "OPTHALMIC", "EYE DROP", "LATANOPROST", "DORZOLAMIDE", "TIMOLOL", 
     "INHALER", "RESPIMAT", "TURBUHALER", "ACCUHALER", "ELLIPTA", "EVOHALER", "BREEZHALER",
@@ -136,6 +135,12 @@ SPECIALIZED_KEYWORDS = [
     "TAMOXIFEN", "MYCOPHENOLATE", "TACROLIMUS", "CYCLOSPORINE", 
     "CHOLECALCIFEROL", "CALCITRIOL"
 ]
+
+def sanitize_excel_text(text):
+    """Strips invisible control characters that crash Excel XML."""
+    if not isinstance(text, str):
+        return text
+    return re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', text)
 
 # --- 3. EXTRACTION ENGINES ---
 def extract_general_data(pdf_stream):
@@ -208,7 +213,6 @@ def extract_indent_data(pdf_stream):
         if qty_idx > 0:
             drug_name = " ".join(lines[:qty_idx])
             
-            # Master logic: Explicit A-marker OR falls under specialized heuristic whitelist
             is_group_a = re.search(r'\((A/KK|A\*|A)\)', drug_name, re.IGNORECASE)
             is_specialized = any(kw in drug_name.upper() for kw in SPECIALIZED_KEYWORDS)
             
@@ -251,19 +255,20 @@ def append_to_indent_list(patients, template_path):
         for idx, drug in enumerate(p["Drugs"]):
             r = start_row
             cell_c = sheet[f'C{r}']
-            cell_c.value = combined_details if idx == 0 else ""
+            cell_c.value = sanitize_excel_text(combined_details) if idx == 0 else ""
             cell_c.font, cell_c.alignment, cell_c.fill = font_style, align_left, fill_color
 
             cell_f = sheet[f'F{r}']
-            cell_f.value = drug["Name"]
+            cell_f.value = sanitize_excel_text(drug["Name"])
             cell_f.font, cell_f.alignment, cell_f.fill = font_style, align_left, fill_color
 
             cell_g = sheet[f'G{r}']
-            cell_g.value = drug["Dosage"]
+            cell_g.value = sanitize_excel_text(drug["Dosage"])
             cell_g.font, cell_g.alignment, cell_g.fill = font_style, align_center, fill_color
 
             cell_i = sheet[f'I{r}']
-            cell_i.value = int(drug["Quantity"]) if drug["Quantity"].isdigit() else drug["Quantity"]
+            raw_qty = sanitize_excel_text(str(drug["Quantity"]))
+            cell_i.value = int(raw_qty) if raw_qty.isdigit() else raw_qty
             cell_i.font, cell_i.alignment, cell_i.fill = font_style, align_center, fill_color
             
             start_row += 1
@@ -287,8 +292,9 @@ def build_kew_page(drugs_chunk, template_path, output_path, start_index=1):
     for i, drug in enumerate(drugs_chunk):
         r = 17 + i
         sheet[f'A{r}'].value = start_index + i
-        sheet[f'B{r}'].value = drug["Name"]
-        sheet[f'D{r}'].value = int(drug["Quantity"]) if str(drug["Quantity"]).isdigit() else drug["Quantity"]
+        sheet[f'B{r}'].value = sanitize_excel_text(drug["Name"])
+        raw_qty = sanitize_excel_text(str(drug["Quantity"]))
+        sheet[f'D{r}'].value = int(raw_qty) if raw_qty.isdigit() else raw_qty
         for c in ['A', 'B', 'D']: 
             sheet[f'{c}{r}'].font = font_style
             sheet[f'{c}{r}'].alignment = align_center if c != 'B' else align_left
@@ -313,10 +319,10 @@ def build_lampiran_page(patient_groups_in_page, template_path, output_path):
         if count == 0: continue
         end_row = current_row + count - 1
         sheet[f'A{current_row}'] = patient_number
-        sheet[f'B{current_row}'] = p["Tarikh"]
+        sheet[f'B{current_row}'] = sanitize_excel_text(p["Tarikh"])
         sheet[f'C{current_row}'] = "HOSPITAL BINTULU"
-        sheet[f'D{current_row}'] = p["Nama"]
-        sheet[f'E{current_row}'].value = str(p["No KP"])
+        sheet[f'D{current_row}'] = sanitize_excel_text(p["Nama"])
+        sheet[f'E{current_row}'].value = sanitize_excel_text(str(p["No KP"]))
         sheet[f'E{current_row}'].number_format = '@'
         if count > 1:
             for col in ['A', 'B', 'C', 'D', 'E', 'F']:
@@ -325,7 +331,10 @@ def build_lampiran_page(patient_groups_in_page, template_path, output_path):
             sheet[f'{col}{current_row}'].font, sheet[f'{col}{current_row}'].alignment = font_style, align_center
         for idx, drug in enumerate(p["Drugs"]):
             r = current_row + idx
-            sheet[f'G{r}'].value, sheet[f'L{r}'].value, sheet[f'M{r}'].value = drug["Name"], drug["Dosage"], drug["Quantity"]
+            sheet[f'G{r}'].value = sanitize_excel_text(drug["Name"])
+            sheet[f'L{r}'].value = sanitize_excel_text(drug["Dosage"])
+            raw_qty = sanitize_excel_text(str(drug["Quantity"]))
+            sheet[f'M{r}'].value = int(raw_qty) if raw_qty.isdigit() else raw_qty
             for c in ['G', 'L', 'M']: 
                 sheet[f'{c}{r}'].font = font_style
                 sheet[f'{c}{r}'].alignment = align_center if c != 'G' else align_left
