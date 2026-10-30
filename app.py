@@ -254,7 +254,6 @@ def append_to_indent_list(patients, template_path):
     align_center = Alignment(vertical='center', horizontal='center', wrap_text=True)
     
     green_fill = PatternFill(start_color="FF00FF00", end_color="FF00FF00", fill_type="solid")
-    clear_fill = PatternFill(fill_type=None)
 
     for p in patients:
         if not p["Drugs"]: continue 
@@ -268,10 +267,10 @@ def append_to_indent_list(patients, template_path):
         
         for r in range(4, sheet.max_row + 1):
             c_e = sheet.cell(row=r, column=5)
-            c_c = sheet.cell(row=r, column=3).value
-            c_f = sheet.cell(row=r, column=6).value
             if c_e.fill and c_e.fill.start_color and c_e.fill.start_color.index == hosp_color_hex:
                 found_hospital = True
+                c_c = sheet.cell(row=r, column=3).value
+                c_f = sheet.cell(row=r, column=6).value
                 if c_c or c_f:
                     last_populated = r
                     
@@ -285,42 +284,43 @@ def append_to_indent_list(patients, template_path):
         for idx, drug in enumerate(p["Drugs"]):
             r = insert_idx + idx
             
-            # Wipe formatting to pure white/no-fill to prevent black cells
-            for col_idx in range(1, 15):
-                sheet.cell(row=r, column=col_idx).fill = clear_fill
+            # 1. Force wipe all formats to prevent Excel color bleed from row above
+            for col_idx in range(2, 15):
+                cell = sheet.cell(row=r, column=col_idx)
+                cell.fill = PatternFill(fill_type=None)
+                cell.border = thin_border
+                cell.alignment = align_center
+                cell.font = font_style
             
-            cell_b = sheet[f'B{r}']
-            cell_b.value = False 
-            cell_b.alignment = align_center
+            # Checkbox Box (B)
+            sheet[f'B{r}'].value = False 
 
+            # Patient Details (C)
             cell_c = sheet[f'C{r}']
             cell_c.value = sanitize_excel_text(combined_details) if idx == 0 else ""
-            cell_c.font, cell_c.alignment = font_style, align_left
+            cell_c.alignment = align_left
 
+            # Hospital Color Block (E)
             sheet[f'E{r}'].fill = hosp_fill
 
+            # Clean Drug Name + Dosage Combined (F)
             cell_f = sheet[f'F{r}']
-            cell_f.value = sanitize_excel_text(drug["Name"])
-            cell_f.font, cell_f.alignment = font_style, align_left
+            drug_str = f"{drug['Name']} [{drug['Dosage']}]"
+            cell_f.value = sanitize_excel_text(drug_str)
+            cell_f.alignment = align_left
 
-            cell_g = sheet[f'G{r}']
-            cell_g.value = sanitize_excel_text(drug["Dosage"])
-            cell_g.font, cell_g.alignment = font_style, align_left
-
+            # Next Date - Green Block (H)
             sheet[f'H{r}'].value = sanitize_excel_text(drug["Next_Date"])
-            sheet[f'H{r}'].font, sheet[f'H{r}'].alignment = font_style, align_center
             sheet[f'H{r}'].fill = green_fill
 
+            # Balance Quantity (I)
             cell_i = sheet[f'I{r}']
             bal_qty = sanitize_excel_text(str(drug["Balance_Qty"]))
             cell_i.value = int(bal_qty) if bal_qty.isdigit() else bal_qty
-            cell_i.font, cell_i.alignment = font_style, align_center
             
+            # Future Date Blocks (K, N)
             sheet[f'K{r}'].fill = green_fill
             sheet[f'N{r}'].fill = green_fill
-
-            for col_idx in range(2, 15):
-                sheet.cell(row=r, column=col_idx).border = thin_border
                 
     wb.save(output_path)
     return output_path
