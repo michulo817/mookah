@@ -140,6 +140,16 @@ def sanitize_excel_text(text):
     if not isinstance(text, str): return text
     return re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', text)
 
+def insert_rows_safe(sheet, idx, amount):
+    """Bypasses openpyxl bug by safely shifting existing merged cells down."""
+    sheet.insert_rows(idx, amount)
+    for merged_range in list(sheet.merged_cells.ranges):
+        min_col, min_row, max_col, max_row = merged_range.bounds
+        if min_row >= idx:
+            merged_range.shift(row_shift=amount, col_shift=0)
+        elif min_row < idx <= max_row:
+            merged_range.expand(down=amount, right=0)
+
 # --- 3. EXTRACTION ENGINES ---
 def extract_general_data(pdf_stream):
     patient_data = {"Nama": "UNKNOWN", "No KP": "", "Tarikh": datetime.now().strftime("%d/%m/%Y"), "Drugs": []}
@@ -278,37 +288,37 @@ def append_to_indent_list(patients, template_path):
         if found_hospital:
             insert_idx = last_populated + 1
             
-        sheet.insert_rows(insert_idx, amount=num_drugs)
+        # Execute safe row injection to preserve all existing patient block formats
+        insert_rows_safe(sheet, insert_idx, num_drugs)
+        
         combined_details = f"{p['Nama']} ({p['No KP']})\n{p['MRN']} TCA: {p['TCA']}"
         start_merge_row = insert_idx
+        end_merge_row = start_merge_row + num_drugs - 1
 
-        # Pass 1: Write Data & Force Wipe Inherited Gridlines
+        # Pass 1: Write Data & Apply Grids to Independent Columns
         for idx, drug in enumerate(p["Drugs"]):
             r = insert_idx + idx
             
-            # Wipe completely to pure grid
+            # Wipe format completely for the row
             for col_idx in range(1, 15):
                 cell = sheet.cell(row=r, column=col_idx)
                 cell.fill = clear_fill
                 cell.font = font_style
                 
-                # Apply borders ONLY to unmerged columns to prevent ghost lines inside merges
-                if col_idx not in [2, 3, 4, 5]:
+                # Apply standard full grid borders EXCEPT to Columns C & D (which will merge)
+                if col_idx not in [3, 4]:
                     cell.border = thin_border
                 else:
                     cell.border = empty_border
             
-            # Write data ONLY to the first row of merged blocks (Google Sheets drops merges if bottom rows have data)
+            sheet[f'B{r}'].value = False 
+            sheet[f'B{r}'].alignment = align_center
+
             if idx == 0:
-                sheet[f'B{r}'].value = False 
-                sheet[f'B{r}'].alignment = align_center
-
                 sheet[f'C{r}'].value = sanitize_excel_text(combined_details)
-                sheet[f'C{r}'].alignment = align_left
-
-                sheet[f'E{r}'].fill = hosp_fill
             
-            # Write drug-specific data to every row normally
+            sheet[f'E{r}'].fill = hosp_fill
+            
             cell_f = sheet[f'F{r}']
             drug_str = f"{drug['Name']} [{drug['Dosage']}]"
             cell_f.value = sanitize_excel_text(drug_str)
@@ -329,25 +339,19 @@ def append_to_indent_list(patients, template_path):
             sheet[f'K{r}'].fill = green_fill
             sheet[f'N{r}'].fill = green_fill
 
-        # Pass 2: Explicitly draw ONLY the outer perimeter for the merged blocks (B, C:D, E)
-        end_merge_row = start_merge_row + num_drugs - 1
-        
+        # Pass 2: Draw strict perimeter around the Name Block (C:D) to avoid ghost lines
         for r in range(start_merge_row, end_merge_row + 1):
             t = thin if r == start_merge_row else none_side
             b = thin if r == end_merge_row else none_side
             
-            sheet.cell(row=r, column=2).border = Border(left=thin, right=thin, top=t, bottom=b) # B Block
-            sheet.cell(row=r, column=3).border = Border(left=thin, right=none_side, top=t, bottom=b) # C (Left half of name)
-            sheet.cell(row=r, column=4).border = Border(left=none_side, right=thin, top=t, bottom=b) # D (Right half of name)
-            sheet.cell(row=r, column=5).border = Border(left=thin, right=thin, top=t, bottom=b) # E Block
+            # Cell C (Left half of name block)
+            sheet.cell(row=r, column=3).border = Border(left=thin, right=none_side, top=t, bottom=b) 
+            # Cell D (Right half of name block)
+            sheet.cell(row=r, column=4).border = Border(left=none_side, right=thin, top=t, bottom=b) 
 
-        # Pass 3: Execute the Merges seamlessly
-        if num_drugs > 1:
-            sheet.merge_cells(start_row=start_merge_row, start_column=2, end_row=end_merge_row, end_column=2) # Merge B Vertically
-            sheet.merge_cells(start_row=start_merge_row, start_column=3, end_row=end_merge_row, end_column=4) # Merge C:D Horizontally & Vertically
-            sheet.merge_cells(start_row=start_merge_row, start_column=5, end_row=end_merge_row, end_column=5) # Merge E Vertically
-        else:
-            sheet.merge_cells(start_row=start_merge_row, start_column=3, end_row=start_merge_row, end_column=4) # Merge C:D Horizontally Only
+        # Pass 3: Execute Name Block Merge
+        sheet.merge_cells(start_row=start_merge_row, start_column=3, end_row=end_merge_row, end_column=4)
+        sheet.cell(row=start_merge_row, column=3).alignment = align_left
 
     wb.save(output_path)
     return output_path
