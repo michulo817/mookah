@@ -1,4 +1,4 @@
-import streamlit as st
+import streamimport streamlit as st
 import re
 import openpyxl
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
@@ -209,10 +209,12 @@ def extract_filtered_data(pdf_stream):
 
             drug_name = re.sub(r'\s*\(\s*\)$', '', drug_name).strip()
 
-            is_group_a = re.search(r'\((A/KK|A\*|A)\)', drug_name, re.IGNORECASE)
+            # The ultimate restricted drug regex catcher
+            is_group_a_strict = re.search(r'[\(\[]\s*(A|A\*|A\*\*|A/KK|A/A\*/A/KK|A\*/KK|A/A\*)\s*[\)\]]', drug_name, re.IGNORECASE)
+            is_group_a_loose = re.search(r'\s+(A\*|A/KK|A/A\*/A/KK|A\*/KK|A/A\*)\s+', drug_name + " ", re.IGNORECASE)
             is_specialized = any(kw in drug_name.upper() for kw in SPECIALIZED_KEYWORDS)
             
-            if is_group_a or is_specialized:
+            if is_group_a_strict or is_group_a_loose or is_specialized:
                 patient_data["Drugs"].append({
                     "Name": drug_name, 
                     "Dosage": dosage, 
@@ -422,7 +424,6 @@ uploaded_master = st.file_uploader("OVERRIDE MASTER DATABASE", type=["xlsx"], la
 if uploaded_pdfs:
     st.info(f"INPUT RECEIVED: {len(uploaded_pdfs)} DOCUMENT(S).")
     
-    # Establish Active Master Template
     active_indent_template = INDENT_TEMPLATE
     if uploaded_master:
         active_indent_template = "CUSTOM_MASTER_TEMPLATE.xlsx"
@@ -440,12 +441,10 @@ if uploaded_pdfs:
                 if not valid_patients:
                     st.error("NO RESTRICTED DRUGS DETECTED IN ARCHIVES.")
                 else:
-                    # 1. Inject Master Database
                     indent_path = append_to_indent_list(valid_patients, active_indent_template)
                     with open(indent_path, "rb") as f: indent_bytes = f.read()
                     os.remove(indent_path)
 
-                    # 2. Build Lampiran 2 Pages
                     generated_forms = {}
                     lampiran_pages, current_page_patients, current_page_used_rows = [], [], 0
 
@@ -468,7 +467,6 @@ if uploaded_pdfs:
                         with open(out_name, "rb") as f: generated_forms[out_name] = f.read()
                         os.remove(out_name)
 
-                    # 3. Build KEW PS7 Pages
                     all_drugs_flat = [d for p in valid_patients for d in p["Drugs"]]
                     kew_chunks = [all_drugs_flat[i:i + KEW_CAPACITY] for i in range(0, len(all_drugs_flat), KEW_CAPACITY)]
                     total_counter = 1
@@ -480,7 +478,6 @@ if uploaded_pdfs:
                         with open(out_name, "rb") as f: generated_forms[out_name] = f.read()
                         os.remove(out_name)
 
-                    # 4. Package Master ZIP
                     zip_buffer = io.BytesIO()
                     with zipfile.ZipFile(zip_buffer, "w") as zf:
                         zf.writestr("UPDATED_INDENT_LIST.xlsx", indent_bytes)
