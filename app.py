@@ -217,7 +217,7 @@ def extract_filtered_data(pdf_stream):
                     "Name": drug_name, 
                     "Dosage": dosage, 
                     "Balance_Qty": balance_qty,
-                    "Quantity": balance_qty, # Mirrors required format for Forms Engine
+                    "Quantity": balance_qty, 
                     "Next_Date": next_date
                 })
                 
@@ -382,13 +382,12 @@ def build_lampiran_page(patient_groups_in_page, template_path, output_path):
 st.markdown('<div class="ye-title">S P U B</div>', unsafe_allow_html=True)
 st.markdown('<div class="ye-subtitle">UNIFIED DATA PIPELINE</div>', unsafe_allow_html=True)
 
+st.markdown("<label>1. INPUT SOURCE (PDF ARCHIVES)</label>", unsafe_allow_html=True)
 input_mode = st.radio("INPUT SOURCE", ["BROWSER UPLOAD", "LOCAL DIRECTORY BATCH"], horizontal=True, label_visibility="collapsed")
-st.write("---")
 
 uploaded_pdfs = []
-
 if input_mode == "BROWSER UPLOAD":
-    raw_uploads = st.file_uploader("PROVIDE ARCHIVES (PDF / ZIP)", type=["pdf", "zip"], accept_multiple_files=True)
+    raw_uploads = st.file_uploader("PROVIDE ARCHIVES (PDF / ZIP)", type=["pdf", "zip"], accept_multiple_files=True, label_visibility="collapsed")
     if raw_uploads:
         for file in raw_uploads:
             if file.name.lower().endswith(".zip"):
@@ -401,7 +400,6 @@ if input_mode == "BROWSER UPLOAD":
             elif file.name.lower().endswith(".pdf"):
                 uploaded_pdfs.append(file)
 else:
-    st.markdown("<label>PROVIDE LOCAL FOLDER PATH</label>", unsafe_allow_html=True)
     folder_path = st.text_input("LOCAL FOLDER PATH", label_visibility="collapsed", placeholder="E.G., C:/Users/Admin/Downloads/SPUB_PDFs")
     if folder_path:
         if os.path.isdir(folder_path):
@@ -416,10 +414,22 @@ else:
         else:
             st.error("SYSTEM ERROR: DIRECTORY NOT FOUND.")
 
+st.write("---")
+st.markdown("<label>2. OPTIONAL: OVERRIDE MASTER DATABASE (XLSX)</label>", unsafe_allow_html=True)
+st.markdown('<div class="ye-subtitle" style="margin-bottom: 10px;">LEAVE EMPTY TO USE DEFAULT REPOSITORY TEMPLATE</div>', unsafe_allow_html=True)
+uploaded_master = st.file_uploader("OVERRIDE MASTER DATABASE", type=["xlsx"], label_visibility="collapsed")
+
 if uploaded_pdfs:
     st.info(f"INPUT RECEIVED: {len(uploaded_pdfs)} DOCUMENT(S).")
+    
+    # Establish Active Master Template
+    active_indent_template = INDENT_TEMPLATE
+    if uploaded_master:
+        active_indent_template = "CUSTOM_MASTER_TEMPLATE.xlsx"
+        with open(active_indent_template, "wb") as f:
+            f.write(uploaded_master.getbuffer())
 
-    if not os.path.exists(KEW_TEMPLATE) or not os.path.exists(LAMP_TEMPLATE) or not os.path.exists(INDENT_TEMPLATE):
+    if not os.path.exists(KEW_TEMPLATE) or not os.path.exists(LAMP_TEMPLATE) or not os.path.exists(active_indent_template):
         st.error("SYSTEM ERROR: ONE OR MORE TEMPLATES MISSING.")
     else:
         if st.button("EXECUTE MASTER BATCH", type="primary", use_container_width=True):
@@ -431,7 +441,7 @@ if uploaded_pdfs:
                     st.error("NO RESTRICTED DRUGS DETECTED IN ARCHIVES.")
                 else:
                     # 1. Inject Master Database
-                    indent_path = append_to_indent_list(valid_patients, INDENT_TEMPLATE)
+                    indent_path = append_to_indent_list(valid_patients, active_indent_template)
                     with open(indent_path, "rb") as f: indent_bytes = f.read()
                     os.remove(indent_path)
 
