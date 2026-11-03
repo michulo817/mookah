@@ -104,7 +104,6 @@ st.markdown("""
         color: #ffffff !important;
     }
     
-    /* Text Input Styling for Folder Path */
     .stTextInput > div > div > input {
         background-color: #080808 !important;
         color: #ffffff !important;
@@ -129,7 +128,7 @@ thin_border = Border(left=thin, right=thin, top=thin, bottom=thin)
 empty_border = Border(left=none_side, right=none_side, top=none_side, bottom=none_side)
 
 COLORS = {
-    "HBTU": "FFFF00FF",   # Magenta / Purple for Bintulu
+    "HBTU": "FFFF00FF",   # Magenta for Bintulu
     "HSIBU": "FFFFFF00",  # Yellow for Sibu
     "SGH": "FFFF9900",    # Orange for SGH
     "DEFAULT": "FFFFFFFF" 
@@ -150,7 +149,6 @@ def sanitize_excel_text(text):
     return re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', text)
 
 def insert_rows_safe(sheet, idx, amount):
-    """Bypasses openpyxl bug by safely shifting existing merged cells down."""
     sheet.insert_rows(idx, amount)
     for merged_range in list(sheet.merged_cells.ranges):
         min_col, min_row, max_col, max_row = merged_range.bounds
@@ -159,45 +157,8 @@ def insert_rows_safe(sheet, idx, amount):
         elif min_row < idx <= max_row:
             merged_range.expand(down=amount, right=0)
 
-# --- 3. EXTRACTION ENGINES ---
-def extract_general_data(pdf_stream):
-    patient_data = {"Nama": "UNKNOWN", "No KP": "", "Tarikh": datetime.now().strftime("%d/%m/%Y"), "Drugs": []}
-    if hasattr(pdf_stream, "seek"): pdf_stream.seek(0)
-        
-    full_text = ""
-    reader = PdfReader(pdf_stream)
-    for page in reader.pages: full_text += (page.extract_text() or "") + "\n"
-    full_text = full_text.replace('\r\n', '\n').replace('\r', '\n')
-
-    name_match = re.search(r"Nama:\s*(.*)", full_text)
-    kp_match = re.search(r"No\.\s*KP:\s*(\d+)", full_text)
-    if name_match: patient_data["Nama"] = name_match.group(1).strip().upper()
-    if kp_match: patient_data["No KP"] = kp_match.group(1).strip()
-
-    blocks = re.split(r'\n(?:[A-Z_ ]+\n)?\d+\.\n', full_text)
-    for block in blocks[1:]:
-        lines = [line.strip() for line in block.split('\n') if line.strip()]
-        qty_idx = next((i - 1 for i, line in enumerate(lines) if "hari" in line.lower()), -1)
-        
-        if qty_idx > 0:
-            qty = lines[qty_idx]
-            last_paren_idx = next((i for i in range(qty_idx - 1, -1, -1) if ')' in lines[i]), -1)
-            
-            if last_paren_idx != -1:
-                drug_name = " ".join(lines[:last_paren_idx+1])
-                dosage_raw = " ".join(lines[last_paren_idx+1:qty_idx])
-            else:
-                drug_name = lines[0]
-                dosage_raw = " ".join(lines[1:qty_idx])
-                
-            dosage = re.sub(r'\s+', ' ', dosage_raw).strip()
-            dosage = re.sub(r'(\d)\s*Q\s*(\d)\s*W', r'\1Q\2W', dosage, flags=re.I)
-            dosage = re.sub(r'(\d)\s*Q\s*(\d)\s*D', r'\1Q\2D', dosage, flags=re.I)
-            patient_data["Drugs"].append({"Name": drug_name, "Dosage": dosage, "Quantity": qty})
-            
-    return patient_data
-
-def extract_indent_data(pdf_stream):
+# --- 3. EXTRACTION ENGINE ---
+def extract_filtered_data(pdf_stream):
     if hasattr(pdf_stream, "seek"): pdf_stream.seek(0)
     full_text = ""
     reader = PdfReader(pdf_stream)
@@ -212,6 +173,7 @@ def extract_indent_data(pdf_stream):
     patient_data = {
         "Nama": name.group(1).strip().upper() if name else "UNKNOWN",
         "No KP": kp.group(1).strip() if kp else "UNKNOWN",
+        "Tarikh": datetime.now().strftime("%d/%m/%Y"),
         "MRN": mrn.group(1).strip().upper() if mrn else "",
         "TCA": tca.group(1).strip() if tca else "NO TCA",
         "Hospital_Code": "DEFAULT",
@@ -255,6 +217,7 @@ def extract_indent_data(pdf_stream):
                     "Name": drug_name, 
                     "Dosage": dosage, 
                     "Balance_Qty": balance_qty,
+                    "Quantity": balance_qty, # Mirrors required format for Forms Engine
                     "Next_Date": next_date
                 })
                 
@@ -294,8 +257,7 @@ def append_to_indent_list(patients, template_path):
                 if c_c or c_f:
                     last_populated = r
                     
-        if found_hospital:
-            insert_idx = last_populated + 1
+        if found_hospital: insert_idx = last_populated + 1
             
         insert_rows_safe(sheet, insert_idx, num_drugs)
         
@@ -310,11 +272,8 @@ def append_to_indent_list(patients, template_path):
                 cell = sheet.cell(row=r, column=col_idx)
                 cell.fill = clear_fill
                 cell.font = font_style
-                
-                if col_idx not in [3, 4]:
-                    cell.border = thin_border
-                else:
-                    cell.border = empty_border
+                if col_idx not in [3, 4]: cell.border = thin_border
+                else: cell.border = empty_border
             
             sheet[f'B{r}'].value = False 
             sheet[f'B{r}'].alignment = align_center
@@ -331,10 +290,7 @@ def append_to_indent_list(patients, template_path):
 
             cell_g = sheet[f'G{r}']
             bal_qty = sanitize_excel_text(str(drug["Balance_Qty"]))
-            if bal_qty.isdigit():
-                cell_g.value = f"{bal_qty}/7"
-            else:
-                cell_g.value = bal_qty
+            cell_g.value = f"{bal_qty}/7" if bal_qty.isdigit() else bal_qty
             cell_g.alignment = align_left
 
             sheet[f'H{r}'].value = sanitize_excel_text(drug["Next_Date"])
@@ -347,7 +303,6 @@ def append_to_indent_list(patients, template_path):
         for r in range(start_merge_row, end_merge_row + 1):
             t = thin if r == start_merge_row else none_side
             b = thin if r == end_merge_row else none_side
-            
             sheet.cell(row=r, column=3).border = Border(left=thin, right=none_side, top=t, bottom=b) 
             sheet.cell(row=r, column=4).border = Border(left=none_side, right=thin, top=t, bottom=b) 
 
@@ -423,12 +378,10 @@ def build_lampiran_page(patient_groups_in_page, template_path, output_path):
         patient_number += 1
     wb.save(output_path)
 
-
 # --- 5. UI ROUTING ---
 st.markdown('<div class="ye-title">S P U B</div>', unsafe_allow_html=True)
-st.markdown('<div class="ye-subtitle">DATA EXTRACTION ENGINE</div>', unsafe_allow_html=True)
+st.markdown('<div class="ye-subtitle">UNIFIED DATA PIPELINE</div>', unsafe_allow_html=True)
 
-app_mode = st.radio("SELECT MODULE", ["FORMS (KEW PS7 & LAMPIRAN 2)", "INDENT LIST (MASTER DATABASE)"], horizontal=True, label_visibility="collapsed")
 input_mode = st.radio("INPUT SOURCE", ["BROWSER UPLOAD", "LOCAL DIRECTORY BATCH"], horizontal=True, label_visibility="collapsed")
 st.write("---")
 
@@ -466,92 +419,73 @@ else:
 if uploaded_pdfs:
     st.info(f"INPUT RECEIVED: {len(uploaded_pdfs)} DOCUMENT(S).")
 
-    if app_mode == "FORMS (KEW PS7 & LAMPIRAN 2)":
-        if not os.path.exists(KEW_TEMPLATE) or not os.path.exists(LAMP_TEMPLATE):
-            st.error("SYSTEM ERROR: FORM TEMPLATES MISSING.")
-        else:
-            if st.button("INITIALIZE EXTRACTION", type="primary", use_container_width=True):
-                with st.spinner("PROCESSING DATA..."):
-                    all_patients = [extract_general_data(pdf) for pdf in uploaded_pdfs]
+    if not os.path.exists(KEW_TEMPLATE) or not os.path.exists(LAMP_TEMPLATE) or not os.path.exists(INDENT_TEMPLATE):
+        st.error("SYSTEM ERROR: ONE OR MORE TEMPLATES MISSING.")
+    else:
+        if st.button("EXECUTE MASTER BATCH", type="primary", use_container_width=True):
+            with st.spinner("FILTERING DRUGS & GENERATING DOCUMENTS..."):
+                all_patients = [extract_filtered_data(pdf) for pdf in uploaded_pdfs]
+                valid_patients = [p for p in all_patients if p["Drugs"]]
+                
+                if not valid_patients:
+                    st.error("NO RESTRICTED DRUGS DETECTED IN ARCHIVES.")
+                else:
+                    # 1. Inject Master Database
+                    indent_path = append_to_indent_list(valid_patients, INDENT_TEMPLATE)
+                    with open(indent_path, "rb") as f: indent_bytes = f.read()
+                    os.remove(indent_path)
+
+                    # 2. Build Lampiran 2 Pages
+                    generated_forms = {}
+                    lampiran_pages, current_page_patients, current_page_used_rows = [], [], 0
+
+                    for patient in valid_patients:
+                        remaining_drugs = list(patient["Drugs"])
+                        while remaining_drugs:
+                            space_left = LAMP_CAPACITY - current_page_used_rows
+                            if space_left <= 0:
+                                lampiran_pages.append(current_page_patients)
+                                current_page_patients, current_page_used_rows, space_left = [], 0, LAMP_CAPACITY
+                            take_drugs = remaining_drugs[:space_left]
+                            remaining_drugs = remaining_drugs[space_left:]
+                            current_page_patients.append({"Nama": patient["Nama"], "No KP": patient["No KP"], "Tarikh": patient["Tarikh"], "Drugs": take_drugs})
+                            current_page_used_rows += len(take_drugs)
+                    if current_page_patients: lampiran_pages.append(current_page_patients)
+
+                    for page_idx, page_patients in enumerate(lampiran_pages):
+                        out_name = f"LAMPIRAN_2_PT_{page_idx+1}.xlsx"
+                        build_lampiran_page(page_patients, LAMP_TEMPLATE, out_name)
+                        with open(out_name, "rb") as f: generated_forms[out_name] = f.read()
+                        os.remove(out_name)
+
+                    # 3. Build KEW PS7 Pages
+                    all_drugs_flat = [d for p in valid_patients for d in p["Drugs"]]
+                    kew_chunks = [all_drugs_flat[i:i + KEW_CAPACITY] for i in range(0, len(all_drugs_flat), KEW_CAPACITY)]
+                    total_counter = 1
+
+                    for page_idx, chunk in enumerate(kew_chunks):
+                        out_name = f"KEW_PS7_PT_{page_idx+1}.xlsx"
+                        build_kew_page(chunk, KEW_TEMPLATE, out_name, start_index=total_counter)
+                        total_counter += len(chunk)
+                        with open(out_name, "rb") as f: generated_forms[out_name] = f.read()
+                        os.remove(out_name)
+
+                    # 4. Package Master ZIP
+                    zip_buffer = io.BytesIO()
+                    with zipfile.ZipFile(zip_buffer, "w") as zf:
+                        zf.writestr("UPDATED_INDENT_LIST.xlsx", indent_bytes)
+                        for filename, filedata in generated_forms.items(): zf.writestr(filename, filedata)
                     
-                    if sum(len(p["Drugs"]) for p in all_patients) == 0:
-                        st.error("EXTRACTION FAILED. NO USABLE TEXT.")
-                    else:
-                        generated_files_dict = {}
-                        lampiran_pages, current_page_patients, current_page_used_rows = [], [], 0
+                    st.session_state["batch_results"] = {"patients": valid_patients, "indent": indent_bytes, "zip": zip_buffer.getvalue()}
 
-                        for patient in all_patients:
-                            remaining_drugs = list(patient["Drugs"])
-                            while remaining_drugs:
-                                space_left = LAMP_CAPACITY - current_page_used_rows
-                                if space_left <= 0:
-                                    lampiran_pages.append(current_page_patients)
-                                    current_page_patients, current_page_used_rows, space_left = [], 0, LAMP_CAPACITY
-                                take_drugs = remaining_drugs[:space_left]
-                                remaining_drugs = remaining_drugs[space_left:]
-                                current_page_patients.append({"Nama": patient["Nama"], "No KP": patient["No KP"], "Tarikh": patient["Tarikh"], "Drugs": take_drugs})
-                                current_page_used_rows += len(take_drugs)
-                        if current_page_patients: lampiran_pages.append(current_page_patients)
-
-                        for page_idx, page_patients in enumerate(lampiran_pages):
-                            out_name = f"LAMPIRAN_2_PT_{page_idx+1}.xlsx"
-                            build_lampiran_page(page_patients, LAMP_TEMPLATE, out_name)
-                            with open(out_name, "rb") as f: generated_files_dict[out_name] = f.read()
-                            os.remove(out_name)
-
-                        all_drugs_flat = [d for p in all_patients for d in p["Drugs"]]
-                        kew_chunks = [all_drugs_flat[i:i + KEW_CAPACITY] for i in range(0, len(all_drugs_flat), KEW_CAPACITY)]
-                        total_counter = 1
-
-                        for page_idx, chunk in enumerate(kew_chunks):
-                            out_name = f"KEW_PS7_PT_{page_idx+1}.xlsx"
-                            build_kew_page(chunk, KEW_TEMPLATE, out_name, start_index=total_counter)
-                            total_counter += len(chunk)
-                            with open(out_name, "rb") as f: generated_files_dict[out_name] = f.read()
-                            os.remove(out_name)
-
-                        zip_buffer = io.BytesIO()
-                        with zipfile.ZipFile(zip_buffer, "w") as zf:
-                            for filename, filedata in generated_files_dict.items(): zf.writestr(filename, filedata)
-                        
-                        st.session_state["form_results"] = {"patients": all_patients, "files": generated_files_dict, "zip": zip_buffer.getvalue()}
-
-        if st.session_state.get("form_results"):
-            st.success("PROCESS COMPLETE.")
-            st.markdown('<br><div class="ye-subtitle" style="margin-bottom: 10px;">DATA LOG</div>', unsafe_allow_html=True)
-            for p in st.session_state["form_results"]["patients"]:
-                with st.expander(f"{p['Nama']} // {p['No KP']} // {len(p['Drugs'])} DRUGS", expanded=False):
-                    st.dataframe(p["Drugs"], use_container_width=True) if p["Drugs"] else st.warning("EMPTY RECORD.")
-            
-            st.markdown('<br><div class="ye-subtitle" style="margin-bottom: 20px;">EXPORT ARCHIVES</div>', unsafe_allow_html=True)
-            cols = st.columns(2)
-            for idx, fname in enumerate(st.session_state["form_results"]["files"].keys()):
-                with cols[idx % 2]: st.download_button(label=fname, data=st.session_state["form_results"]["files"][fname], file_name=fname, use_container_width=True)
-            st.download_button("DOWNLOAD MASTER ARCHIVE (ZIP)", data=st.session_state["form_results"]["zip"], file_name="SPUB_FORMS.zip", mime="application/zip", use_container_width=True)
-
-    elif app_mode == "INDENT LIST (MASTER DATABASE)":
-        if not os.path.exists(INDENT_TEMPLATE):
-            st.error(f"SYSTEM ERROR: MASTER TEMPLATE '{INDENT_TEMPLATE}' MISSING.")
-        else:
-            if st.button("INTEGRATE TO MASTER DATABASE", type="primary", use_container_width=True):
-                with st.spinner("FILTERING RESTRICTED DRUGS..."):
-                    indent_patients = [extract_indent_data(pdf) for pdf in uploaded_pdfs]
-                    
-                    if sum(len(p["Drugs"]) for p in indent_patients) == 0:
-                        st.error("NO TARGET DRUGS DETECTED IN ARCHIVES.")
-                    else:
-                        out_path = append_to_indent_list(indent_patients, INDENT_TEMPLATE)
-                        with open(out_path, "rb") as f:
-                            st.session_state["indent_result"] = {"file": f.read(), "patients": indent_patients}
-                        os.remove(out_path)
-
-        if st.session_state.get("indent_result"):
-            st.success("DATABASE INTEGRATION COMPLETE.")
-            st.markdown('<br><div class="ye-subtitle" style="margin-bottom: 10px;">INDENT LOG (RESTRICTED DRUGS ONLY)</div>', unsafe_allow_html=True)
-            for p in st.session_state["indent_result"]["patients"]:
-                if p["Drugs"]:
-                    with st.expander(f"{p['Nama']} // {p['MRN']} // {p['Hospital_Code']}", expanded=True):
-                        st.dataframe(p["Drugs"], use_container_width=True)
-            
-            st.markdown('<br><div class="ye-subtitle" style="margin-bottom: 20px;">EXPORT DATABASE</div>', unsafe_allow_html=True)
-            st.download_button("DOWNLOAD UPDATED INDENT LIST", data=st.session_state["indent_result"]["file"], file_name="UPDATED_INDENT_LIST.xlsx", use_container_width=True)
+    if st.session_state.get("batch_results"):
+        st.success("MASTER PIPELINE COMPLETE.")
+        st.markdown('<br><div class="ye-subtitle" style="margin-bottom: 10px;">INDENT LOG (RESTRICTED DRUGS ONLY)</div>', unsafe_allow_html=True)
+        for p in st.session_state["batch_results"]["patients"]:
+            with st.expander(f"{p['Nama']} // {p['MRN']} // {p['Hospital_Code']}", expanded=False):
+                st.dataframe(p["Drugs"], use_container_width=True)
+        
+        st.markdown('<br><div class="ye-subtitle" style="margin-bottom: 20px;">EXPORT DOCUMENTS</div>', unsafe_allow_html=True)
+        cols = st.columns(2)
+        with cols[0]: st.download_button("DOWNLOAD INDENT LIST", data=st.session_state["batch_results"]["indent"], file_name="UPDATED_INDENT_LIST.xlsx", use_container_width=True)
+        with cols[1]: st.download_button("DOWNLOAD MASTER ARCHIVE (ZIP)", data=st.session_state["batch_results"]["zip"], file_name="SPUB_MASTER_BATCH.zip", mime="application/zip", use_container_width=True)
