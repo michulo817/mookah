@@ -103,6 +103,15 @@ st.markdown("""
         font-weight: 600 !important;
         color: #ffffff !important;
     }
+    
+    /* Text Input Styling for Folder Path */
+    .stTextInput > div > div > input {
+        background-color: #080808 !important;
+        color: #ffffff !important;
+        border: 1px solid #333333 !important;
+        border-radius: 0px !important;
+        padding: 15px !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -288,24 +297,20 @@ def append_to_indent_list(patients, template_path):
         if found_hospital:
             insert_idx = last_populated + 1
             
-        # Execute safe row injection to preserve all existing patient block formats
         insert_rows_safe(sheet, insert_idx, num_drugs)
         
         combined_details = f"{p['Nama']} ({p['No KP']})\n{p['MRN']} TCA: {p['TCA']}"
         start_merge_row = insert_idx
         end_merge_row = start_merge_row + num_drugs - 1
 
-        # Pass 1: Write Data & Apply Grids to Independent Columns
         for idx, drug in enumerate(p["Drugs"]):
             r = insert_idx + idx
             
-            # Wipe format completely for the row
             for col_idx in range(1, 15):
                 cell = sheet.cell(row=r, column=col_idx)
                 cell.fill = clear_fill
                 cell.font = font_style
                 
-                # Apply standard full grid borders EXCEPT to Columns C & D (which will merge)
                 if col_idx not in [3, 4]:
                     cell.border = thin_border
                 else:
@@ -339,17 +344,13 @@ def append_to_indent_list(patients, template_path):
             sheet[f'K{r}'].fill = green_fill
             sheet[f'N{r}'].fill = green_fill
 
-        # Pass 2: Draw strict perimeter around the Name Block (C:D) to avoid ghost lines
         for r in range(start_merge_row, end_merge_row + 1):
             t = thin if r == start_merge_row else none_side
             b = thin if r == end_merge_row else none_side
             
-            # Cell C (Left half of name block)
             sheet.cell(row=r, column=3).border = Border(left=thin, right=none_side, top=t, bottom=b) 
-            # Cell D (Right half of name block)
             sheet.cell(row=r, column=4).border = Border(left=none_side, right=thin, top=t, bottom=b) 
 
-        # Pass 3: Execute Name Block Merge
         sheet.merge_cells(start_row=start_merge_row, start_column=3, end_row=end_merge_row, end_column=4)
         sheet.cell(row=start_merge_row, column=3).alignment = align_left
 
@@ -428,9 +429,39 @@ st.markdown('<div class="ye-title">S P U B</div>', unsafe_allow_html=True)
 st.markdown('<div class="ye-subtitle">DATA EXTRACTION ENGINE</div>', unsafe_allow_html=True)
 
 app_mode = st.radio("SELECT MODULE", ["FORMS (KEW PS7 & LAMPIRAN 2)", "INDENT LIST (MASTER DATABASE)"], horizontal=True, label_visibility="collapsed")
+input_mode = st.radio("INPUT SOURCE", ["BROWSER UPLOAD", "LOCAL DIRECTORY BATCH"], horizontal=True, label_visibility="collapsed")
 st.write("---")
 
-uploaded_pdfs = st.file_uploader("PROVIDE ARCHIVES (PDF)", type=["pdf"], accept_multiple_files=True)
+uploaded_pdfs = []
+
+if input_mode == "BROWSER UPLOAD":
+    raw_uploads = st.file_uploader("PROVIDE ARCHIVES (PDF / ZIP)", type=["pdf", "zip"], accept_multiple_files=True)
+    if raw_uploads:
+        for file in raw_uploads:
+            if file.name.lower().endswith(".zip"):
+                with zipfile.ZipFile(file, "r") as zf:
+                    for name in zf.namelist():
+                        if name.lower().endswith(".pdf") and not name.startswith("__MACOSX"):
+                            pdf_bytes = io.BytesIO(zf.read(name))
+                            pdf_bytes.name = os.path.basename(name)
+                            uploaded_pdfs.append(pdf_bytes)
+            elif file.name.lower().endswith(".pdf"):
+                uploaded_pdfs.append(file)
+else:
+    st.markdown("<label>PROVIDE LOCAL FOLDER PATH</label>", unsafe_allow_html=True)
+    folder_path = st.text_input("LOCAL FOLDER PATH", label_visibility="collapsed", placeholder="E.G., C:/Users/Admin/Downloads/SPUB_PDFs")
+    if folder_path:
+        if os.path.isdir(folder_path):
+            pdf_files = [os.path.join(folder_path, f) for f in os.listdir(folder_path) if f.lower().endswith('.pdf')]
+            for path in pdf_files:
+                with open(path, "rb") as f:
+                    pdf_bytes = io.BytesIO(f.read())
+                    pdf_bytes.name = os.path.basename(path)
+                    uploaded_pdfs.append(pdf_bytes)
+            if not uploaded_pdfs:
+                st.warning("DIRECTORY FOUND, BUT NO PDFS DETECTED.")
+        else:
+            st.error("SYSTEM ERROR: DIRECTORY NOT FOUND.")
 
 if uploaded_pdfs:
     st.info(f"INPUT RECEIVED: {len(uploaded_pdfs)} DOCUMENT(S).")
